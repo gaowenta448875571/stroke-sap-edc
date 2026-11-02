@@ -135,14 +135,14 @@ Object.assign(window.App, {
                         <td>
                           <div class="flex flex-wrap gap-1">
                             ${[
-                              { code: "0", text: "0正常" },
-                              { code: "1", text: "1异常无意义" },
-                              { code: "2", text: "2异常有意义" },
-                              { code: "9", text: "9未查" }
+                              { code: "0", text: "0=正常" },
+                              { code: "1", text: "1=异常但无临床意义" },
+                              { code: "2", text: "2=异常且有临床意义" },
+                              { code: "9", text: "9=未查 (ND)" }
                             ]
                               .map(
                                 ev => `
-                              <button type="button" onclick="App.setByPath('${visitKey}.labs.${item.id}.eval', '${ev.code}', '${item.name}临床意义')"
+                              <button type="button" title="${ev.text}" onclick="App.setByPath('${visitKey}.labs.${item.id}.eval', '${ev.code}', '${item.name}临床意义')"
                                 class="px-2 py-1 rounded text-xs border transition ${
                                   String(evalVal) === ev.code
                                     ? ev.code === "2"
@@ -150,7 +150,7 @@ Object.assign(window.App, {
                                       : "bg-sky-600 text-white border-sky-600 font-semibold"
                                     : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
                                 }">
-                                □${ev.code}
+                                ${String(evalVal) === ev.code ? "☑" : "□"}${ev.code}
                               </button>
                             `
                               )
@@ -170,7 +170,13 @@ Object.assign(window.App, {
               .join("")}
           </tbody>
         </table>
-        <p class="text-xs text-slate-500 mt-2">*注：<strong>0</strong>=正常；<strong>1</strong>=异常，无临床意义；<strong>2</strong>=异常，有临床意义；<strong>9</strong>=未查（ND）。</p>
+        <div class="mt-2.5 px-3.5 py-2 rounded-lg bg-slate-50 border border-slate-200 text-xs text-slate-700 flex flex-wrap items-center gap-x-4 gap-y-1">
+          <span class="font-bold text-slate-900">* 临床意义评估代码说明：</span>
+          <span><strong class="inline-block px-1.5 py-0.5 rounded bg-sky-100 text-sky-800 font-mono mr-1">0</strong>正常</span>
+          <span><strong class="inline-block px-1.5 py-0.5 rounded bg-sky-100 text-sky-800 font-mono mr-1">1</strong>异常但无临床意义</span>
+          <span><strong class="inline-block px-1.5 py-0.5 rounded bg-rose-100 text-rose-800 font-mono mr-1">2</strong>异常且有临床意义</span>
+          <span><strong class="inline-block px-1.5 py-0.5 rounded bg-slate-200 text-slate-700 font-mono mr-1">9</strong>未查（ND）</span>
+        </div>
       </div>
     `;
   },
@@ -187,7 +193,7 @@ Object.assign(window.App, {
               <th class="w-40">量表总分 / 结果</th>
               <th class="w-36">评估者签字</th>
               <th class="w-44">是否为针刺操作者</th>
-              <th class="w-44 text-center no-print">逐项评分计算器</th>
+              <th class="w-48 text-center no-print">逐项评分计算器</th>
               <th class="min-w-[150px]">备注 / 说明</th>
             </tr>
           </thead>
@@ -195,7 +201,9 @@ Object.assign(window.App, {
             ${scaleKeys
               .map(sKey => {
                 const def = window.CLINICAL_SCALES[sKey];
-                const sc = scales[sKey] || { score: "", signer: subj.investigator, isAcupuncturist: "否", note: "" };
+                const sc = scales[sKey] || { score: "", signer: subj.investigator, isAcupuncturist: "否", note: "", details: {} };
+                const detailCount = sc.details ? Object.keys(sc.details).filter(k => sc.details[k] !== "" && sc.details[k] !== undefined).length : 0;
+                const totalItems = (def.items || []).length;
                 return `
                   <tr>
                     <td>
@@ -221,8 +229,13 @@ Object.assign(window.App, {
                     </td>
                     <td class="text-center no-print">
                       <button type="button" onclick="App.openScaleModal('${visitKey}', '${sKey}')"
-                        class="px-3 py-1.5 rounded-lg bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 text-xs font-semibold transition">
-                        🧮 展开量表细则算分
+                        class="px-3 py-1.5 rounded-lg bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 text-xs font-semibold transition inline-flex flex-col items-center gap-0.5">
+                        <span>🧮 展开量表细则算分</span>
+                        ${
+                          detailCount > 0
+                            ? `<span class="text-[10px] text-emerald-700 font-medium">✓ 已填细则 (${detailCount}/${totalItems}项)</span>`
+                            : `<span class="text-[10px] text-slate-400 font-normal">共 ${totalItems} 项评分细则</span>`
+                        }
                       </button>
                     </td>
                     <td>
@@ -1128,18 +1141,23 @@ Object.assign(window.App, {
                       <td class="text-xs text-slate-500">${it.unit}</td>
                       <td>
                         <div class="flex flex-wrap gap-1">
-                          ${["0", "1", "2", "9"]
+                          ${[
+                            { code: "0", text: "0=正常" },
+                            { code: "1", text: "1=异常但无临床意义" },
+                            { code: "2", text: "2=异常且有临床意义" },
+                            { code: "9", text: "9=未查 (ND)" }
+                          ]
                             .map(
-                              code => `
-                            <button type="button" onclick="App.setByPath('v2_3.infLabs.${it.id}.eval', '${code}', 'V2_3-${it.name}临床意义')"
+                              ev => `
+                            <button type="button" title="${ev.text}" onclick="App.setByPath('v2_3.infLabs.${it.id}.eval', '${ev.code}', 'V2_3-${it.name}临床意义')"
                               class="px-2 py-1 rounded text-xs border transition ${
-                                String(evalVal) === code
-                                  ? code === "2"
+                                String(evalVal) === ev.code
+                                  ? ev.code === "2"
                                     ? "bg-rose-600 text-white border-rose-600 font-semibold"
                                     : "bg-sky-600 text-white border-sky-600 font-semibold"
                                   : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
                               }">
-                              □${code}
+                              ${String(evalVal) === ev.code ? "☑" : "□"}${ev.code}
                             </button>
                           `
                             )
@@ -1157,6 +1175,13 @@ Object.assign(window.App, {
                 .join("")}
             </tbody>
           </table>
+          <div class="mt-2.5 px-3.5 py-2 rounded-lg bg-slate-50 border border-slate-200 text-xs text-slate-700 flex flex-wrap items-center gap-x-4 gap-y-1">
+            <span class="font-bold text-slate-900">* 临床意义评估代码说明：</span>
+            <span><strong class="inline-block px-1.5 py-0.5 rounded bg-sky-100 text-sky-800 font-mono mr-1">0</strong>正常</span>
+            <span><strong class="inline-block px-1.5 py-0.5 rounded bg-sky-100 text-sky-800 font-mono mr-1">1</strong>异常但无临床意义</span>
+            <span><strong class="inline-block px-1.5 py-0.5 rounded bg-rose-100 text-rose-800 font-mono mr-1">2</strong>异常且有临床意义</span>
+            <span><strong class="inline-block px-1.5 py-0.5 rounded bg-slate-200 text-slate-700 font-mono mr-1">9</strong>未查（ND）</span>
+          </div>
         </div>
 
         <!-- 病原学四项 -->

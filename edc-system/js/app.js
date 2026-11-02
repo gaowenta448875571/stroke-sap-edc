@@ -524,6 +524,40 @@ window.App = {
     this.render();
   },
 
+  // 实时拖动或输入今日健康 VAS 视觉模拟评分 (0-100分) —— 原位更新 DOM，不触发整页重绘以保证拖动顺滑
+  updateScaleModalVas(rawVal, source = "range") {
+    let v = parseInt(rawVal, 10);
+    if (isNaN(v)) v = 0;
+    v = Math.max(0, Math.min(100, v));
+    this.state.scaleModal.tempVas = v;
+
+    const dispEl = document.getElementById("edc-scale-vas-display");
+    if (dispEl) dispEl.textContent = `${v} 分`;
+
+    if (source !== "range") {
+      const rangeEl = document.getElementById("edc-scale-vas-range");
+      if (rangeEl) rangeEl.value = String(v);
+    }
+    if (source !== "num") {
+      const numEl = document.getElementById("edc-scale-vas-num");
+      if (numEl) numEl.value = String(v);
+    }
+
+    const { tempDetails } = this.state.scaleModal;
+    const m = tempDetails.mobility || 1;
+    const s = tempDetails.selfcare || 1;
+    const a = tempDetails.activity || 1;
+    const p = tempDetails.pain || 1;
+    const x = tempDetails.anxiety || 1;
+    const liveTotal = `${m}-${s}-${a}-${p}-${x} (VAS: ${v}分)`;
+
+    const totalEl = document.getElementById("edc-scale-live-total");
+    if (totalEl) totalEl.textContent = liveTotal;
+
+    const confirmBtn = document.getElementById("edc-scale-confirm-btn");
+    if (confirmBtn) confirmBtn.textContent = `✓ 确认算分并回填 (${liveTotal})`;
+  },
+
   closeScaleModal() {
     this.state.scaleModal.open = false;
     this.render();
@@ -638,7 +672,7 @@ window.App = {
 
     root.innerHTML = `
       ${this.renderTopNavbar(subj)}
-      <main class="max-w-[1600px] mx-auto px-3 sm:px-5 ${this.state.mainTab === "editor" ? "py-3" : "py-5"}">
+      <main class="max-w-[1800px] mx-auto px-3 sm:px-5 ${this.state.mainTab === "editor" ? "py-3" : "py-5"}">
         ${
           this.state.mainTab === "dashboard"
             ? this.renderDashboardView()
@@ -691,11 +725,9 @@ window.App = {
     if (nextDocxBody) nextDocxBody.scrollTop = savedDocxScroll;
   },
 
-  // 账号登录视图（支持远程后端鉴权与本地演示鉴权，账号权限由后端统一开通下发）
+  // 账号登录视图（简洁专业的临床科研登录页）
   renderLoginView() {
     const proj = window.CRF_CONFIG.project;
-    const cfg = window.EDC_API.getConfig();
-    const users = window.EDC_API.getLocalUsers();
 
     return `
       <div class="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-sky-950 flex flex-col justify-center items-center px-4 py-8">
@@ -707,14 +739,11 @@ window.App = {
                 eCRF
               </div>
               <div>
-                <span class="text-[11px] px-2 py-0.5 rounded bg-sky-500/20 text-sky-300 border border-sky-400/30 font-semibold">
-                  ${proj.version}
-                </span>
-                <h1 class="text-base sm:text-lg font-bold tracking-tight mt-1 leading-snug">${proj.title}</h1>
+                <h1 class="text-base sm:text-lg font-bold tracking-tight leading-snug">${proj.title}</h1>
               </div>
             </div>
             <p class="text-xs text-slate-400 mt-2.5">
-              临床科研电子数据采集系统 (EDC) · 账号与角色权限由后端统一开通管理
+              临床科研电子数据采集系统 (EDC)
             </p>
           </div>
 
@@ -734,14 +763,14 @@ window.App = {
             <div>
               <label class="block text-xs font-bold text-slate-700 mb-1.5">研究者账号 / 工号</label>
               <input type="text" name="login_account" value="${this.state.loginAccount || ""}" required
-                placeholder="例如: dr_lihua / dr_wangqiang"
+                placeholder="请输入研究者账号"
                 class="crf-input py-2.5 text-sm font-medium" />
             </div>
 
             <div>
               <label class="block text-xs font-bold text-slate-700 mb-1.5">登录密码</label>
               <input type="password" name="login_password" value="${this.state.loginPassword || ""}" required
-                placeholder="请输入密码 (默认演示密码: 123456)"
+                placeholder="请输入登录密码"
                 class="crf-input py-2.5 text-sm font-medium" />
             </div>
 
@@ -749,86 +778,13 @@ window.App = {
               class="w-full py-2.5 px-4 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-bold text-sm shadow-md transition flex items-center justify-center gap-2 cursor-pointer">
               <span>🔐 登录进入 eCRF 系统</span>
             </button>
-
-            <!-- 快捷填入测试账号 -->
-            <div class="pt-3 border-t border-slate-100">
-              <div class="flex items-center justify-between mb-2">
-                <span class="text-[11px] font-bold text-slate-500">已开通账号快捷填入（点击下方角色卡）：</span>
-                <span class="text-[11px] text-slate-400">默认密码: 123456</span>
-              </div>
-              <div class="grid grid-cols-2 gap-1.5">
-                ${users
-                  .map(
-                    u => `
-                  <button type="button" onclick="App.quickFillLogin('${u.account}', '123456')"
-                    class="text-left p-2 rounded-lg border text-xs transition ${
-                      this.state.loginAccount === u.account
-                        ? "border-sky-500 bg-sky-50/80 text-sky-900"
-                        : "border-slate-200 hover:border-slate-300 bg-slate-50 text-slate-700"
-                    }">
-                    <div class="font-bold flex items-center justify-between">
-                      <span>${u.name}</span>
-                      <span class="text-[10px] px-1.5 py-0.2 rounded ${
-                        u.isPI ? "bg-emerald-100 text-emerald-800" : "bg-slate-200 text-slate-600"
-                      }">${u.isPI ? "PI/管理员" : "录入员"}</span>
-                    </div>
-                    <div class="text-[11px] text-slate-500 font-mono truncate">${u.account}</div>
-                  </button>
-                `
-                  )
-                  .join("")}
-              </div>
-            </div>
-
-            <!-- 后端服务器 API 地址配置折叠区 -->
-            <div class="pt-2 border-t border-slate-100">
-              <button type="button" onclick="App.state.showLoginBackendCfg=!App.state.showLoginBackendCfg;App.render()"
-                class="w-full flex items-center justify-between text-xs text-slate-500 hover:text-slate-800 py-1 font-medium">
-                <span>🌐 后端鉴权与数据服务模式：<strong class="${cfg.mode === "remote" ? "text-emerald-600" : "text-sky-600"}">${
-                  cfg.mode === "remote" ? "远程后端 API (" + cfg.baseUrl + ")" : "本地存储模式 (支持离线演示)"
-                }</strong></span>
-                <span>${this.state.showLoginBackendCfg ? "▲ 收起" : "▼ 配置后端"}</span>
-              </button>
-
-              ${
-                this.state.showLoginBackendCfg
-                  ? `
-                <div class="mt-2 p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-2.5 text-xs">
-                  <div>
-                    <label class="block font-semibold text-slate-700 mb-1">运行模式</label>
-                    <select id="login-cfg-mode" class="crf-input text-xs py-1.5">
-                      <option value="local" ${cfg.mode === "local" ? "selected" : ""}>本地存储模式 (离线可用，模拟后端权限表)</option>
-                      <option value="remote" ${cfg.mode === "remote" ? "selected" : ""}>远程后端服务器模式 (连接 FastAPI 后端数据库)</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label class="block font-semibold text-slate-700 mb-1">后端 API 根地址 (Base URL)</label>
-                    <input type="text" id="login-cfg-url" value="${cfg.baseUrl}"
-                      placeholder="例如: https://your-edc-backend.onrender.com/api/v1"
-                      class="crf-input font-mono text-xs py-1.5" />
-                  </div>
-                  <div class="flex items-center gap-2 pt-1">
-                    <button type="button" onclick="App.saveBackendConfigFromDOM('login-cfg-mode','login-cfg-url')"
-                      class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-white font-semibold">
-                      保存连接设置
-                    </button>
-                    <button type="button" onclick="App.testBackendFromDOM('login-cfg-url')"
-                      class="px-3 py-1.5 rounded-lg bg-sky-100 hover:bg-sky-200 text-sky-800 font-semibold">
-                      测试后端连通性
-                    </button>
-                  </div>
-                </div>
-              `
-                  : ""
-              }
-            </div>
           </form>
         </div>
       </div>
     `;
   },
 
-  // 顶部全局导航栏（专门优化手机端、平板端与宽屏响应式排版，包含当前登录账号、后端权限管理、退出登录、PI导出、AI导入与Word打印导出）
+  // 顶部全局导航栏（专门优化手机端、平板端与宽屏响应式排版，宽屏下完整展示项目标题不遮挡）
   renderTopNavbar(subj) {
     const proj = window.CRF_CONFIG.project;
     const allReminders = this.getAllReminders();
@@ -841,20 +797,15 @@ window.App = {
     return `
       <header class="bg-slate-900 text-white shadow-md sticky top-0 z-30 no-print">
         <!-- 第一层主栏 -->
-        <div class="max-w-[1600px] mx-auto px-3 sm:px-5 h-14 sm:h-16 flex items-center justify-between gap-2">
-          <!-- 左侧 Logo 与标题 -->
-          <div class="flex items-center gap-2.5 min-w-0">
+        <div class="w-full max-w-[1920px] mx-auto px-3 sm:px-5 py-2 min-h-[56px] flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+          <!-- 左侧 Logo 与完整项目标题（不截断遮挡） -->
+          <div class="flex items-center gap-2.5 min-w-0 flex-1">
             <div class="w-11 h-8 sm:h-9 px-1.5 rounded-lg bg-gradient-to-br from-sky-500 to-teal-500 flex items-center justify-center font-extrabold text-xs tracking-tight shadow-inner shrink-0 select-none">
               eCRF
             </div>
-            <div class="min-w-0">
-              <div class="flex items-center gap-2">
-                <h1 class="font-bold text-xs sm:text-base lg:text-lg tracking-tight truncate">${proj.title}</h1>
-                <span class="hidden 2xl:inline-block text-[11px] px-2 py-0.5 rounded bg-sky-500/20 text-sky-300 border border-sky-400/30 shrink-0">
-                  ${proj.version}
-                </span>
-              </div>
-              <p class="hidden sm:block text-[11px] text-slate-400 truncate">
+            <div class="min-w-0 flex-1">
+              <h1 class="font-bold text-xs sm:text-sm xl:text-base 2xl:text-[17px] tracking-tight leading-snug break-words">${proj.title}</h1>
+              <p class="hidden sm:block text-[11px] text-slate-400">
                 临床科研电子数据采集系统 · 当前登录：<span class="text-sky-300 font-semibold">${curUser.name} (${curUser.account})</span> ${
                   isPI ? "[PI权限]" : canExport ? "[已授权导出]" : "[数据录入员]"
                 }
@@ -865,13 +816,13 @@ window.App = {
           <!-- 桌面端中部：主视图切换页签 (lg 及以上显示在顶栏中间) -->
           <div class="hidden lg:flex items-center gap-1 bg-slate-800 p-1 rounded-lg border border-slate-700 shrink-0">
             <button onclick="App.state.mainTab='dashboard';App.render()"
-              class="px-3 py-1.5 rounded-md text-xs font-medium transition ${
+              class="px-2.5 py-1.5 rounded-md text-xs font-medium transition ${
                 this.state.mainTab === "dashboard" ? "bg-sky-600 text-white shadow" : "text-slate-300 hover:text-white"
               }">
               📊 队列总览与访视矩阵
             </button>
             <button onclick="App.state.mainTab='editor';App.render()"
-              class="px-3 py-1.5 rounded-md text-xs font-medium transition ${
+              class="px-2.5 py-1.5 rounded-md text-xs font-medium transition ${
                 this.state.mainTab === "editor" ? "bg-sky-600 text-white shadow" : "text-slate-300 hover:text-white"
               }">
               📝 病例报告表 (eCRF) 填报
@@ -879,12 +830,11 @@ window.App = {
           </div>
 
           <!-- 右侧操作区（自适应手机与桌面） -->
-          <div class="flex items-center gap-1.5 sm:gap-2 shrink-0">
+          <div class="flex items-center gap-1.5 shrink-0">
             <!-- 桌面端当前登录身份牌 + 后端权限管理 + 退出登录 -->
-            <div class="hidden xl:flex items-center gap-1.5 bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1 text-xs">
+            <div class="hidden xl:flex items-center gap-1.5 bg-slate-800 border border-slate-700 rounded-lg px-2 py-1 text-xs">
               <span class="text-emerald-400">●</span>
               <span class="font-semibold text-white">${curUser.name}</span>
-              <span class="text-slate-400 font-mono">(${curUser.account})</span>
               <span class="px-1.5 py-0.2 rounded text-[10px] font-bold ${
                 isPI ? "bg-emerald-500/20 text-emerald-300 border border-emerald-400/30" : "bg-slate-700 text-slate-300"
               }">${isPI ? "PI" : "研究者"}</span>
@@ -893,7 +843,7 @@ window.App = {
                   ? `
                 <button onclick="App.state.userAdminModalOpen=true;App.render()"
                   title="后端账号开通与权限配置"
-                  class="ml-1 px-2 py-0.5 rounded bg-indigo-600/80 hover:bg-indigo-500 text-white text-[11px] font-semibold transition">
+                  class="ml-0.5 px-2 py-0.5 rounded bg-indigo-600/80 hover:bg-indigo-500 text-white text-[11px] font-semibold transition">
                   🔑 权限管理
                 </button>
               `
@@ -901,14 +851,14 @@ window.App = {
               }
               <button onclick="App.handleLogout()"
                 title="退出当前账号并返回登录页"
-                class="ml-1 px-2 py-0.5 rounded bg-rose-600/80 hover:bg-rose-500 text-white text-[11px] font-semibold transition">
+                class="ml-0.5 px-2 py-0.5 rounded bg-rose-600/80 hover:bg-rose-500 text-white text-[11px] font-semibold transition">
                 退出
               </button>
             </div>
 
             <!-- 采集节点提醒按钮（手机端显示紧凑图标+数字，桌面显示完整文字） -->
             <button onclick="App.state.reminderModalOpen=true;App.render()"
-              class="px-2.5 py-1.5 rounded-lg ${
+              class="px-2 py-1.5 rounded-lg ${
                 urgentCount > 0
                   ? "bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-400/40"
                   : "bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-600"
@@ -920,45 +870,45 @@ window.App = {
 
             <!-- 新增受试者 -->
             <button onclick="App.state.newSubjectModalOpen=true;App.render()"
-              class="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center gap-1 shadow-xs transition">
+              class="px-2 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center gap-1 shadow-xs transition">
               <span>＋</span>
               <span class="hidden sm:inline">新增受试者</span>
             </button>
 
             <!-- 桌面端：导入、导出(仅授权/PI)、打印/导出病例报告表.docx -->
             <button onclick="App.state.importModalOpen=true;App.render()"
-              class="hidden xl:inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-teal-700 hover:bg-teal-600 text-white border border-teal-500 text-xs font-semibold transition">
+              class="hidden xl:inline-flex items-center gap-1 px-2 py-1.5 rounded-lg bg-teal-700 hover:bg-teal-600 text-white border border-teal-500 text-xs font-semibold transition">
               📥 导入/AI模版
             </button>
 
             <button onclick="App.handleExportCSV()"
               title="${canExport ? "已开通导出权限，点击导出宽表CSV" : "需后端开通导出权限或使用PI账号"}"
-              class="hidden 2xl:inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border text-xs font-medium transition ${
+              class="hidden 2xl:inline-flex items-center gap-1 px-2 py-1.5 rounded-lg border text-xs font-medium transition ${
                 canExport
                   ? "bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-600"
                   : "bg-slate-800/50 text-slate-400 border-slate-700"
               }">
-              ${canExport ? "⬇ 导出CSV" : "🔒 导出CSV(仅PI)"}
+              ${canExport ? "⬇ 导出CSV" : "🔒 导出CSV"}
             </button>
 
             <button onclick="App.handleExportJSON()"
               title="${canExport ? "已开通导出权限，点击导出全量JSON" : "需后端开通导出权限或使用PI账号"}"
-              class="hidden 2xl:inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border text-xs font-medium transition ${
+              class="hidden 2xl:inline-flex items-center gap-1 px-2 py-1.5 rounded-lg border text-xs font-medium transition ${
                 canExport
                   ? "bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-600"
                   : "bg-slate-800/50 text-slate-400 border-slate-700"
               }">
-              ${canExport ? "⬇ 导出JSON" : "🔒 导出JSON(仅PI)"}
+              ${canExport ? "⬇ 导出JSON" : "🔒 导出JSON"}
             </button>
 
             <button onclick="App.state.docxPreviewModalOpen=true;App.render()"
-              class="hidden xl:inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-sky-700 hover:bg-sky-600 text-white border border-sky-500 text-xs font-semibold transition">
+              class="hidden xl:inline-flex items-center gap-1 px-2 py-1.5 rounded-lg bg-sky-700 hover:bg-sky-600 text-white border border-sky-500 text-xs font-semibold transition">
               🖨 打印/导出Word
             </button>
 
             <!-- 窄屏/平板端 (< 2xl) 更多工具与账号菜单按钮 -->
             <button onclick="App.state.mobileToolbarOpen=!App.state.mobileToolbarOpen;App.render()"
-              class="2xl:hidden px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-600 text-xs font-semibold text-slate-200 flex items-center gap-1">
+              class="2xl:hidden px-2 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-600 text-xs font-semibold text-slate-200 flex items-center gap-1">
               <span>${this.state.mobileToolbarOpen ? "✕" : "☰"}</span>
               <span class="hidden sm:inline">工具/账号</span>
             </button>
@@ -1395,13 +1345,16 @@ window.App = {
               <span class="px-1.5 py-0.5 rounded bg-sky-100 text-sky-800 text-[10px] font-semibold">提醒绑定</span>
             </div>
 
-            <!-- 窄屏(<1024px)专用：当前所在访视指示条 + 展开/折叠导航按钮 -->
-            <div class="lg:hidden pt-1">
+            <!-- 窄屏(<1024px)专用：醒目高亮的展开/折叠访视导航按钮 -->
+            <div class="lg:hidden pt-1.5">
               <button onclick="App.toggleMobileNav()"
-                class="w-full py-2.5 px-3 rounded-xl bg-slate-900 text-white text-xs font-bold flex items-center justify-between shadow-xs">
-                <span class="truncate">📍 当前表单：${curVisit.code} · ${curVisit.name}</span>
-                <span class="px-2 py-0.5 rounded bg-sky-500 text-white text-[11px] shrink-0 ml-2">
-                  ${this.state.mobileNavOpen ? "🔼 收起导航栏" : "📂 展开切换访视/节点"}
+                class="w-full py-3 px-3.5 rounded-xl bg-gradient-to-r from-sky-600 via-blue-600 to-indigo-600 hover:from-sky-500 hover:to-indigo-500 text-white text-xs sm:text-sm font-bold flex items-center justify-between shadow-lg ring-2 ring-sky-300/80 transition cursor-pointer">
+                <span class="truncate flex items-center gap-1.5">
+                  <span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-white text-sky-700 font-extrabold text-xs shrink-0">☰</span>
+                  <span class="truncate">当前表单：${curVisit.code} · ${curVisit.name}</span>
+                </span>
+                <span class="px-2.5 py-1 rounded-lg bg-amber-400 text-slate-950 font-extrabold text-xs shrink-0 ml-2 shadow-xs">
+                  ${this.state.mobileNavOpen ? "🔼 收起目录" : "📂 点击展开访视目录"}
                 </span>
               </button>
             </div>
@@ -1522,6 +1475,20 @@ window.App = {
           </div>
           ${this.renderCRFPageFooter(subj)}
         </section>
+
+        <!-- 窄屏(<1024px)折叠时左下角常驻悬浮展开按钮：滚动到表单深处也能一键呼出访视目录 -->
+        ${
+          !this.state.mobileNavOpen
+            ? `
+          <button type="button"
+            onclick="App.state.mobileNavOpen=true;App.render();var lp=document.getElementById('edc-left-pane');if(lp&&lp.scrollIntoView){lp.scrollIntoView({behavior:'smooth',block:'start'});}"
+            class="lg:hidden fixed bottom-5 left-4 z-40 px-4 py-2.5 rounded-full bg-gradient-to-r from-sky-600 to-indigo-600 text-white font-bold text-xs shadow-2xl border-2 border-white flex items-center gap-2 no-print cursor-pointer">
+            <span class="px-1.5 py-0.5 rounded-full bg-amber-400 text-slate-950 font-extrabold text-[11px]">目录</span>
+            <span>📂 展开切换访视 (${curVisit.code})</span>
+          </button>
+        `
+            : ""
+        }
       </div>
     `;
   },
@@ -1545,6 +1512,12 @@ window.App = {
           </div>
 
           <div class="flex flex-wrap items-center gap-1.5 sm:gap-2 no-print">
+            <!-- 窄屏下表单表头内嵌的醒目切换访视按钮 -->
+            <button type="button"
+              onclick="App.state.mobileNavOpen=!App.state.mobileNavOpen;App.render();var lp=document.getElementById('edc-left-pane');if(lp&&lp.scrollIntoView){lp.scrollIntoView({behavior:'smooth',block:'start'});}"
+              class="lg:hidden px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-extrabold shadow-xs flex items-center gap-1 cursor-pointer">
+              <span>📂 ${this.state.mobileNavOpen ? "收起访视目录" : "展开切换访视目录"}</span>
+            </button>
             <span class="px-2.5 py-1 rounded-lg bg-sky-50 border border-sky-200 text-xs text-slate-700">
               👤 负责人：<strong class="text-slate-900">${ownerName}</strong> <span class="font-mono text-sky-700">(${ownerAcct})</span>
             </span>

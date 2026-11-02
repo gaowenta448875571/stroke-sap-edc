@@ -242,8 +242,19 @@ window.createEmptySubject = function (patientId = "005", customStartDate = "", c
       labs: {},
       scales: {
         GCS: { score: 12, signer: "王医生", isAcupuncturist: "否", details: { eye: 3, verbal: 4, motor: 5 } },
-        NIHSS: { score: 16, signer: "王医生", isAcupuncturist: "否", details: {} },
-        SOFA: { score: 3, signer: "王医生", isAcupuncturist: "否", details: {} },
+        NIHSS: {
+          score: 16,
+          signer: "王医生",
+          isAcupuncturist: "否",
+          details: { "1a": 1, "1b": 1, "1c": 1, "2": 1, "3": 1, "4": 1, "5a": 0, "5b": 3, "6a": 0, "6b": 3, "7": 0, "8": 1, "9": 2, "10": 1, "11": 0 }
+        },
+        SOFA: {
+          score: 3,
+          signer: "王医生",
+          isAcupuncturist: "否",
+          details: { resp: 1, coag: 0, liver: 0, cardio: 0, cns: 2, renal: 0 },
+          measured: { resp: "345", coag: "198", liver: "16.5", cardio: "85", cns: "12", renal: "88" }
+        },
         FOIS: { score: 2, signer: "王医生", isAcupuncturist: "否", details: { level: 2 } },
         EQ5D: { score: "3-3-3-2-2 / VAS:45", vas: 45, filler: "代理人", relation: "子女", details: { mobility: 3, selfcare: 3, activity: 3, pain: 2, anxiety: 2 } }
       },
@@ -564,18 +575,42 @@ window.createInitialSampleSubjects = function () {
   s1.v2_1.completed = true;
   s1.v2_1.visitDate = window.addDaysToDateStr(start1, 3);
   s1.v2_1.vitals = { temp: "37.4", resp: "22", pulse: "88", sbp: "150", dbp: "86" };
-  s1.v2_1.scales.GCS.score = 13;
-  s1.v2_1.scales.NIHSS.score = 14;
-  s1.v2_1.scales.FOIS.score = 3;
-  s1.v2_1.scales.SOFA.score = 2;
+  s1.v2_1.scales.GCS = { score: 13, signer: "王医生", isAcupuncturist: "否", details: { eye: 3, verbal: 4, motor: 6 } };
+  s1.v2_1.scales.NIHSS = {
+    score: 14,
+    signer: "王医生",
+    isAcupuncturist: "否",
+    details: { "1a": 1, "1b": 1, "1c": 0, "2": 1, "3": 1, "4": 1, "5a": 0, "5b": 3, "6a": 0, "6b": 2, "7": 0, "8": 1, "9": 2, "10": 1, "11": 0 }
+  };
+  s1.v2_1.scales.FOIS = { score: 3, signer: "王医生", isAcupuncturist: "否", details: { level: 3 } };
+  s1.v2_1.scales.SOFA = {
+    score: 2,
+    signer: "王医生",
+    isAcupuncturist: "否",
+    details: { resp: 1, coag: 0, liver: 0, cardio: 0, cns: 1, renal: 0 },
+    measured: { resp: "330", coag: "190", liver: "15.0", cardio: "84", cns: "13", renal: "85" }
+  };
+  s1.v2_1.scales.EQ5D = { score: "3-3-3-2-1 / VAS:55", vas: 55, details: { mobility: 3, selfcare: 3, activity: 3, pain: 2, anxiety: 1 } };
 
   s1.v2_2.completed = true;
   s1.v2_2.visitDate = window.addDaysToDateStr(start1, 7);
   s1.v2_2.vitals = { temp: "37.0", resp: "19", pulse: "80", sbp: "142", dbp: "82" };
-  s1.v2_2.scales.GCS.score = 14;
-  s1.v2_2.scales.NIHSS.score = 11;
-  s1.v2_2.scales.FOIS.score = 4;
-  s1.v2_2.scales.SOFA.score = 1;
+  s1.v2_2.scales.GCS = { score: 14, signer: "王医生", isAcupuncturist: "否", details: { eye: 4, verbal: 4, motor: 6 } };
+  s1.v2_2.scales.NIHSS = {
+    score: 11,
+    signer: "王医生",
+    isAcupuncturist: "否",
+    details: { "1a": 0, "1b": 1, "1c": 0, "2": 0, "3": 1, "4": 1, "5a": 0, "5b": 2, "6a": 0, "6b": 2, "7": 0, "8": 1, "9": 2, "10": 1, "11": 0 }
+  };
+  s1.v2_2.scales.FOIS = { score: 4, signer: "王医生", isAcupuncturist: "否", details: { level: 4 } };
+  s1.v2_2.scales.SOFA = {
+    score: 1,
+    signer: "王医生",
+    isAcupuncturist: "否",
+    details: { resp: 0, coag: 0, liver: 0, cardio: 0, cns: 1, renal: 0 },
+    measured: { resp: "405", coag: "205", liver: "14.2", cardio: "82", cns: "14", renal: "82" }
+  };
+  s1.v2_2.scales.EQ5D = { score: "2-3-2-2-1 / VAS:65", vas: 65, details: { mobility: 2, selfcare: 3, activity: 2, pain: 2, anxiety: 1 } };
   s1.v2_2.biosamples = { plasma: "是", swab: "是", stool: "是" };
 
   s1.v2_3.visitDate = window.addDaysToDateStr(start1, 4);
@@ -622,20 +657,30 @@ window.createInitialSampleSubjects = function () {
   s1.v3.completed = true;
   s1.v3.visitDate = window.addDaysToDateStr(start1, 14);
   s1.v3.outcome = { status: "存活出院", date: window.addDaysToDateStr(start1, 14), destination: "康复机构", destinationOther: "", deathReason: "" };
-  s1.v3.scales.MRS.score = 3;
-  s1.v3.scales.NIHSS.score = 8;
+  s1.v3.scales.GCS = { score: 15, signer: "王医生", isAcupuncturist: "否", details: { eye: 4, verbal: 5, motor: 6 } };
+  s1.v3.scales.MRS = { score: 3, signer: "王医生", isAcupuncturist: "否", details: { grade: 3 } };
+  s1.v3.scales.NIHSS = {
+    score: 8,
+    signer: "王医生",
+    isAcupuncturist: "否",
+    details: { "1a": 0, "1b": 0, "1c": 0, "2": 0, "3": 0, "4": 1, "5a": 0, "5b": 2, "6a": 0, "6b": 2, "7": 0, "8": 1, "9": 1, "10": 1, "11": 0 }
+  };
+  s1.v3.scales.FOIS = { score: 5, signer: "王医生", isAcupuncturist: "否", details: { level: 5 } };
+  s1.v3.scales.EQ5D = { score: "2-2-2-2-1 / VAS:72", vas: 72, details: { mobility: 2, selfcare: 2, activity: 2, pain: 2, anxiety: 1 } };
 
   s1.v4.completed = true;
   s1.v4.visitDate = window.addDaysToDateStr(start1, 30);
   s1.v4.survival.alive = "是";
-  s1.v4.scales.MRS.score = 3;
-  s1.v4.scales.FOIS.score = 6;
+  s1.v4.scales.MRS = { score: 3, signer: "赵磊", isAcupuncturist: "否", details: { grade: 3 } };
+  s1.v4.scales.FOIS = { score: 6, signer: "赵磊", isAcupuncturist: "否", details: { level: 6 } };
+  s1.v4.scales.EQ5D = { score: "2-2-2-1-1 / VAS:78", vas: 78, details: { mobility: 2, selfcare: 2, activity: 2, pain: 1, anxiety: 1 } };
 
   s1.v5.completed = true;
   s1.v5.visitDate = window.addDaysToDateStr(start1, 90);
   s1.v5.survival.alive = "是";
-  s1.v5.scales.MRS.score = 2;
-  s1.v5.scales.FOIS.score = 7;
+  s1.v5.scales.MRS = { score: 2, signer: "赵磊", isAcupuncturist: "否", details: { grade: 2 } };
+  s1.v5.scales.FOIS = { score: 7, signer: "赵磊", isAcupuncturist: "否", details: { level: 7 } };
+  s1.v5.scales.EQ5D = { score: "1-2-2-1-1 / VAS:85", vas: 85, details: { mobility: 1, selfcare: 2, activity: 2, pain: 1, anxiety: 1 } };
 
   s1.treatment.reperfusion.ivUsed = "是";
   s1.treatment.reperfusion.drugs[1] = {
@@ -689,10 +734,22 @@ window.createInitialSampleSubjects = function () {
   s2.v2_1.completed = true;
   s2.v2_1.visitDate = window.addDaysToDateStr(start2, 3);
   s2.v2_1.vitals = { temp: "36.9", resp: "19", pulse: "78", sbp: "146", dbp: "84" };
-  s2.v2_1.scales.GCS.score = 14;
-  s2.v2_1.scales.NIHSS.score = 12;
-  s2.v2_1.scales.FOIS.score = 3;
-  s2.v2_1.scales.SOFA.score = 2;
+  s2.v2_1.scales.GCS = { score: 14, signer: "王强", isAcupuncturist: "否", details: { eye: 4, verbal: 4, motor: 6 } };
+  s2.v2_1.scales.NIHSS = {
+    score: 12,
+    signer: "王强",
+    isAcupuncturist: "否",
+    details: { "1a": 0, "1b": 1, "1c": 0, "2": 1, "3": 1, "4": 1, "5a": 0, "5b": 2, "6a": 0, "6b": 2, "7": 0, "8": 1, "9": 2, "10": 1, "11": 0 }
+  };
+  s2.v2_1.scales.FOIS = { score: 3, signer: "王强", isAcupuncturist: "否", details: { level: 3 } };
+  s2.v2_1.scales.SOFA = {
+    score: 2,
+    signer: "王强",
+    isAcupuncturist: "否",
+    details: { resp: 1, coag: 0, liver: 0, cardio: 0, cns: 1, renal: 0 },
+    measured: { resp: "350", coag: "210", liver: "13.8", cardio: "86", cns: "14", renal: "72" }
+  };
+  s2.v2_1.scales.EQ5D = { score: "3-3-3-2-1 / VAS:58", vas: 58, details: { mobility: 3, selfcare: 3, activity: 3, pain: 2, anxiety: 1 } };
 
   // 病例 003：3天前入组 → 今天正好是【第3天 (V2-1) 采集到期日】！（首次录入账号：dr_chenjing 陈静）
   const start3 = window.addDaysToDateStr(today, -3);

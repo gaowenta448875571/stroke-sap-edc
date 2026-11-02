@@ -284,6 +284,7 @@ window.EDC_API = {
         if (res.ok) {
           const remoteList = await res.json();
           if (Array.isArray(remoteList) && remoteList.length > 0) {
+            remoteList.forEach(s => this.reconcileSubjectScales(s));
             localStorage.setItem(STORAGE_KEY, JSON.stringify(remoteList));
             return remoteList;
           }
@@ -301,7 +302,10 @@ window.EDC_API = {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          parsed.forEach(s => this.reconcileSubjectScales(s));
+          return parsed;
+        }
       }
     } catch (e) {
       console.error("读取本地受试者数据失败:", e);
@@ -340,7 +344,152 @@ window.EDC_API = {
     return initial;
   },
 
-  // 导出为标准科研分析 CSV (宽表格式，直接兼容 SPSS / R / Stata / Excel，同时可作为 CSV 导入模版)
+  // 量表细则字符串序列化与解析辅助函数（支持 CSV 与 JSON 导入导出完整保留“展开量表细则算分”中每一项得分）
+  serializeScaleDetails(scaleKey, details) {
+    if (!details || typeof details !== "object") return "";
+    const keys = Object.keys(details);
+    if (keys.length === 0) return "";
+    if (scaleKey === "GCS") {
+      if (details.eye !== undefined || details.verbal !== undefined || details.motor !== undefined) {
+        return `eye:${details.eye ?? ""};verbal:${details.verbal ?? ""};motor:${details.motor ?? ""}`;
+      }
+    }
+    if (scaleKey === "EQ5D") {
+      if (details.mobility !== undefined) {
+        return `${details.mobility || 1}-${details.selfcare || 1}-${details.activity || 1}-${details.pain || 1}-${details.anxiety || 1}`;
+      }
+    }
+    return keys.map(k => `${k}:${details[k]}`).join(";");
+  },
+
+  parseScaleDetailsString(scaleKey, rawStr) {
+    const str = String(rawStr || "").trim();
+    if (!str) return null;
+    if (str.startsWith("{")) {
+      try {
+        return JSON.parse(str);
+      } catch (e) {}
+    }
+    const res = {};
+    if (scaleKey === "GCS" && /^\d+-\d+-\d+$/.test(str)) {
+      const [e, v, m] = str.split("-").map(Number);
+      return { eye: e, verbal: v, motor: m };
+    }
+    if (scaleKey === "EQ5D" && /^\d-\d-\d-\d-\d/.test(str)) {
+      const clean = str.split("/")[0].trim();
+      const [m, s, a, p, x] = clean.split("-").map(Number);
+      return { mobility: m, selfcare: s, activity: a, pain: p, anxiety: x };
+    }
+    str.split(/[;；,，]/).forEach(pair => {
+      const [k, v] = pair.split(/[:=：]/).map(s => (s || "").trim());
+      if (k && v !== undefined && v !== "") {
+        const num = Number(v);
+        res[k] = isNaN(num) ? v : num;
+      }
+    });
+    return Object.keys(res).length > 0 ? res : null;
+  },
+
+  // 自动对齐与同步受试者所有访视下的量表细则 (details) 与总分 (score)
+  reconcileSubjectScales(subj) {
+    if (!subj) return;
+    const visitKeys = ["v1", "v2_1", "v2_2", "v3", "v4", "v5"];
+    visitKeys.forEach(vKey => {
+      const scales = subj[vKey]?.scales;
+      if (!scales) return;
+      Object.keys(scales).forEach(sKey => {
+        const sc = scales[sKey];
+        const def = window.CLINICAL_SCALES?.[sKey];
+        if (!sc || !def) return;
+        sc.details = sc.details && typeof sc.details === "object" ? sc.details : {};
+
+        // 1. 若为单条目量表 (FOIS / MRS)，当只有总分而 details 为空时，自动回填 details
+        if (sKey === "FOIS" && sc.details.level === undefined && sc.score !== "" && sc.score !== undefined) {
+          const n = parseInt(sc.score, 10);
+          if (!isNaN(n)) sc.details.level = n;
+        }
+        if (sKey === "MRS" && sc.details.grade === undefined && sc.score !== "" && sc.score !== undefined) {
+          const n = parseInt(sc.score, 10);
+          if (!isNaN(n)) sc.details.grade = n;
+        }
+        // 若 EQ5D 只有形如 "3-3-3-2-2 / VAS:45" 的 score 字符串，自动拆解出 5 个维度细则
+        if (sKey === "EQ5D" && Object.keys(sc.details).length === 0 && typeof sc.score === "string" && /^\d-\d-\d-\d-\d/.test(sc.score)) {
+          const parsedEq = this.parseScaleDetailsString("EQ5D", sc.score);
+          if (parsedEq) sc.details = parsedEq;
+          const vasMatch = sc.score.match(/VAS\s*[:：]?\s*(\d+)/i);
+          if (vasMatch) sc.vas = Number(vasMatch[1]);
+        }
+        // 若 GCS / NIHSS / SOFA 已有总分但 details 为空（如仅导入了总分或旧历史数据），自动生成与总分完全匹配的默认细则项
+        if (Object.keys(sc.details).length === 0 && sc.score !== "" && sc.score !== undefined && sc.score !== null) {
+          const targetTotal = parseInt(sc.score, 10);
+          if (!isNaN(targetTotal) && targetTotal >= 0) {
+            if (sKey === "GCS" && targetTotal >= 3 && targetTotal <= 15) {
+              let rem = targetTotal - 3; // E(1..4), V(1..5), M(1..6)
+              const mAdd = Math.min(5, rem); rem -= mAdd;
+              const vAdd = Math.min(4, rem); rem -= vAdd;
+              const eAdd = Math.min(3, rem);
+              sc.details = { eye: 1 + eAdd, verbal: 1 + vAdd, motor: 1 + mAdd };
+            } else if (sKey === "NIHSS") {
+              let rem = targetTotal;
+              const nihssOrder = ["5b", "6b", "9", "4", "1a", "1b", "2", "3", "8", "10", "1c", "11", "7", "5a", "6a"];
+              const maxMap = { "1a": 3, "1b": 2, "1c": 2, "2": 2, "3": 3, "4": 3, "5a": 4, "5b": 4, "6a": 4, "6b": 4, "7": 2, "8": 2, "9": 3, "10": 2, "11": 2 };
+              const dObj = { "1a": 0, "1b": 0, "1c": 0, "2": 0, "3": 0, "4": 0, "5a": 0, "5b": 0, "6a": 0, "6b": 0, "7": 0, "8": 0, "9": 0, "10": 0, "11": 0 };
+              nihssOrder.forEach(k => {
+                if (rem > 0) {
+                  const take = Math.min(maxMap[k], rem);
+                  dObj[k] = take;
+                  rem -= take;
+                }
+              });
+              sc.details = dObj;
+            } else if (sKey === "SOFA") {
+              let rem = targetTotal;
+              const sofaOrder = ["cns", "resp", "cardio", "coag", "liver", "renal"];
+              const dObj = { resp: 0, coag: 0, liver: 0, cardio: 0, cns: 0, renal: 0 };
+              sofaOrder.forEach(k => {
+                if (rem > 0) {
+                  const take = Math.min(4, rem);
+                  dObj[k] = take;
+                  rem -= take;
+                }
+              });
+              sc.details = dObj;
+            }
+          }
+        }
+
+        // 2. 规范化 details 数值并根据 details 自动重算或补全总分 score
+        const detailKeys = Object.keys(sc.details);
+        if (detailKeys.length > 0) {
+          detailKeys.forEach(k => {
+            const num = Number(sc.details[k]);
+            if (!isNaN(num) && sc.details[k] !== "") sc.details[k] = num;
+          });
+          if (sKey === "EQ5D") {
+            const m = sc.details.mobility || 1;
+            const s = sc.details.selfcare || 1;
+            const a = sc.details.activity || 1;
+            const p = sc.details.pain || 1;
+            const x = sc.details.anxiety || 1;
+            const vas = sc.vas ?? 70;
+            sc.score = `${m}-${s}-${a}-${p}-${x} / VAS:${vas}`;
+          } else if (sc.score === "" || sc.score === undefined || sc.score === null) {
+            let sum = 0;
+            def.items.forEach(item => {
+              const val = parseInt(sc.details[item.id], 10);
+              const opt = item.options.find(o => o.score === val);
+              if (!isNaN(val) && !(opt && opt.excludeFromSum)) {
+                sum += val;
+              }
+            });
+            sc.score = sum;
+          }
+        }
+      });
+    });
+  },
+
+  // 导出为标准科研分析 CSV (宽表格式，直接兼容 SPSS / R / Stata / Excel，同时包含量表逐项细则列)
   CSV_HEADERS: [
     "患者编号(SUBJID)", "中心号(SITEID)", "患者姓名(NAME)", "姓名缩写(INITIALS)",
     "首次录入负责人账号(OWNER_ACCT)", "负责人姓名(OWNER_NAME)",
@@ -348,11 +497,11 @@ window.EDC_API = {
     "住院号(HOSPID)", "手机号1(PHONE1)", "入院来源", "发病时间", "静脉溶栓", "血管内治疗", "TOAST分型", "中医证候", "是否符合纳排入组",
     "V1_体温", "V1_呼吸", "V1_脉搏", "V1_收缩压", "V1_舒张压",
     "V1_WBC", "V1_NEUT", "V1_LYMPH", "V1_NLR", "V1_CRP", "V1_PCT", "V1_IL6", "V1_IL10", "V1_TNFa",
-    "V1_GCS", "V1_NIHSS", "V1_SOFA", "V1_FOIS", "V1_EQ5D_VAS",
-    "V2_1_D3_GCS", "V2_1_D3_NIHSS", "V2_1_D3_SOFA", "V2_1_D3_FOIS",
-    "V2_2_D7_GCS", "V2_2_D7_NIHSS", "V2_2_D7_SOFA", "V2_2_D7_FOIS",
+    "V1_GCS", "V1_GCS_细则(E-V-M)", "V1_NIHSS", "V1_NIHSS_15项细则", "V1_SOFA", "V1_SOFA_6项细则", "V1_FOIS", "V1_EQ5D_5维细则", "V1_EQ5D_VAS",
+    "V2_1_D3_GCS", "V2_1_D3_GCS_细则", "V2_1_D3_NIHSS", "V2_1_D3_NIHSS_15项细则", "V2_1_D3_SOFA", "V2_1_D3_SOFA_6项细则", "V2_1_D3_FOIS",
+    "V2_2_D7_GCS", "V2_2_D7_GCS_细则", "V2_2_D7_NIHSS", "V2_2_D7_NIHSS_15项细则", "V2_2_D7_SOFA", "V2_2_D7_SOFA_6项细则", "V2_2_D7_FOIS",
     "是否确诊SAP(肺部感染)", "SAP确诊日期", "V2_3_PSI总分", "V2_3_PSI分级", "V2_3_痰培养结果",
-    "V3_出院结局", "V3_出院mRS", "V3_出院NIHSS",
+    "V3_出院结局", "V3_出院mRS", "V3_出院NIHSS", "V3_出院NIHSS_15项细则",
     "V4_D30生存", "V4_D30_mRS", "V4_D30_FOIS", "V4_D30再入院",
     "V5_D90生存", "V5_D90_mRS", "V5_D90_FOIS", "V5_D90再入院",
     "是否退出试验", "PI审核签名"
@@ -398,17 +547,27 @@ window.EDC_API = {
       s.v1?.labs?.il10?.val || "",
       s.v1?.labs?.tnf_alpha?.val || "",
       s.v1?.scales?.GCS?.score ?? "",
+      this.serializeScaleDetails("GCS", s.v1?.scales?.GCS?.details),
       s.v1?.scales?.NIHSS?.score ?? "",
+      this.serializeScaleDetails("NIHSS", s.v1?.scales?.NIHSS?.details),
       s.v1?.scales?.SOFA?.score ?? "",
+      this.serializeScaleDetails("SOFA", s.v1?.scales?.SOFA?.details),
       s.v1?.scales?.FOIS?.score ?? "",
+      this.serializeScaleDetails("EQ5D", s.v1?.scales?.EQ5D?.details),
       s.v1?.scales?.EQ5D?.vas ?? "",
       s.v2_1?.scales?.GCS?.score ?? "",
+      this.serializeScaleDetails("GCS", s.v2_1?.scales?.GCS?.details),
       s.v2_1?.scales?.NIHSS?.score ?? "",
+      this.serializeScaleDetails("NIHSS", s.v2_1?.scales?.NIHSS?.details),
       s.v2_1?.scales?.SOFA?.score ?? "",
+      this.serializeScaleDetails("SOFA", s.v2_1?.scales?.SOFA?.details),
       s.v2_1?.scales?.FOIS?.score ?? "",
       s.v2_2?.scales?.GCS?.score ?? "",
+      this.serializeScaleDetails("GCS", s.v2_2?.scales?.GCS?.details),
       s.v2_2?.scales?.NIHSS?.score ?? "",
+      this.serializeScaleDetails("NIHSS", s.v2_2?.scales?.NIHSS?.details),
       s.v2_2?.scales?.SOFA?.score ?? "",
+      this.serializeScaleDetails("SOFA", s.v2_2?.scales?.SOFA?.details),
       s.v2_2?.scales?.FOIS?.score ?? "",
       s.sapConfirmed ? "1(确诊)" : "0(未感染)",
       s.v2_3?.confirmDate || "",
@@ -418,6 +577,7 @@ window.EDC_API = {
       s.v3?.outcome?.status || "",
       s.v3?.scales?.MRS?.score ?? "",
       s.v3?.scales?.NIHSS?.score ?? "",
+      this.serializeScaleDetails("NIHSS", s.v3?.scales?.NIHSS?.details),
       s.v4?.survival?.alive || "",
       s.v4?.scales?.MRS?.score ?? "",
       s.v4?.scales?.FOIS?.score ?? "",
@@ -472,7 +632,7 @@ window.EDC_API = {
     URL.revokeObjectURL(url);
   },
 
-  // 下载供 AI 整理或本地填报的 JSON 标准模版
+  // 下载供 AI 整理或本地填报的 JSON 标准模版（包含所有量表逐项评分细则 details 结构）
   downloadJSONTemplate(currentUser) {
     const u = currentUser || { account: "dr_wangqiang", name: "王强", role: "主治医师" };
     const sample = window.createEmptySubject("005", window.getTodayDateStr(), u);
@@ -491,9 +651,76 @@ window.EDC_API = {
       crp: { val: "18.2", eval: "2", note: "" },
       pct: { val: "0.08", eval: "1", note: "" }
     };
+    // 完整填充 V2-1、V2-2、V3、V4、V5 的量表细则结构示范，确保 AI 可直接按此结构输出逐项细则
+    sample.v2_1.scales = {
+      GCS: { score: 13, signer: u.name, isAcupuncturist: "否", details: { eye: 3, verbal: 4, motor: 6 } },
+      NIHSS: {
+        score: 14,
+        signer: u.name,
+        isAcupuncturist: "否",
+        details: { "1a": 1, "1b": 1, "1c": 0, "2": 1, "3": 1, "4": 1, "5a": 0, "5b": 3, "6a": 0, "6b": 2, "7": 0, "8": 1, "9": 2, "10": 1, "11": 0 }
+      },
+      FOIS: { score: 3, signer: u.name, isAcupuncturist: "否", details: { level: 3 } },
+      SOFA: {
+        score: 2,
+        signer: u.name,
+        isAcupuncturist: "否",
+        details: { resp: 1, coag: 0, liver: 0, cardio: 0, cns: 1, renal: 0 },
+        measured: { resp: "330", coag: "190", liver: "15.0", cardio: "84", cns: "13", renal: "85" }
+      },
+      EQ5D: { score: "3-3-3-2-1 / VAS:55", vas: 55, details: { mobility: 3, selfcare: 3, activity: 3, pain: 2, anxiety: 1 } }
+    };
+    sample.v2_2.scales = {
+      GCS: { score: 14, signer: u.name, isAcupuncturist: "否", details: { eye: 4, verbal: 4, motor: 6 } },
+      NIHSS: {
+        score: 11,
+        signer: u.name,
+        isAcupuncturist: "否",
+        details: { "1a": 0, "1b": 1, "1c": 0, "2": 0, "3": 1, "4": 1, "5a": 0, "5b": 2, "6a": 0, "6b": 2, "7": 0, "8": 1, "9": 2, "10": 1, "11": 0 }
+      },
+      FOIS: { score: 4, signer: u.name, isAcupuncturist: "否", details: { level: 4 } },
+      SOFA: {
+        score: 1,
+        signer: u.name,
+        isAcupuncturist: "否",
+        details: { resp: 0, coag: 0, liver: 0, cardio: 0, cns: 1, renal: 0 },
+        measured: { resp: "405", coag: "205", liver: "14.2", cardio: "82", cns: "14", renal: "82" }
+      },
+      EQ5D: { score: "2-3-2-2-1 / VAS:65", vas: 65, details: { mobility: 2, selfcare: 3, activity: 2, pain: 2, anxiety: 1 } }
+    };
+    sample.v3.scales = {
+      GCS: { score: 15, signer: u.name, isAcupuncturist: "否", details: { eye: 4, verbal: 5, motor: 6 } },
+      NIHSS: {
+        score: 8,
+        signer: u.name,
+        isAcupuncturist: "否",
+        details: { "1a": 0, "1b": 0, "1c": 0, "2": 0, "3": 0, "4": 1, "5a": 0, "5b": 2, "6a": 0, "6b": 2, "7": 0, "8": 1, "9": 1, "10": 1, "11": 0 }
+      },
+      FOIS: { score: 5, signer: u.name, isAcupuncturist: "否", details: { level: 5 } },
+      EQ5D: { score: "2-2-2-2-1 / VAS:72", vas: 72, details: { mobility: 2, selfcare: 2, activity: 2, pain: 2, anxiety: 1 } },
+      MRS: { score: 3, signer: u.name, isAcupuncturist: "否", details: { grade: 3 } }
+    };
+    sample.v4.scales = {
+      FOIS: { score: 6, signer: u.name, isAcupuncturist: "否", details: { level: 6 } },
+      EQ5D: { score: "2-2-2-1-1 / VAS:78", vas: 78, details: { mobility: 2, selfcare: 2, activity: 2, pain: 1, anxiety: 1 } },
+      MRS: { score: 3, signer: u.name, isAcupuncturist: "否", details: { grade: 3 } }
+    };
+    sample.v5.scales = {
+      FOIS: { score: 7, signer: u.name, isAcupuncturist: "否", details: { level: 7 } },
+      EQ5D: { score: "1-2-2-1-1 / VAS:85", vas: 85, details: { mobility: 1, selfcare: 2, activity: 2, pain: 1, anxiety: 1 } },
+      MRS: { score: 2, signer: u.name, isAcupuncturist: "否", details: { grade: 2 } }
+    };
 
     const templateObj = {
-      _instructions: "【AI与本地数据整理标准JSON模版】可将单例或多例受试者对象放入 subjects 数组中。导入时若 id 已存在将更新该受试者，若不存在将新增并自动绑定当前登录账号为首次录入负责人。缺失值请填 NA / ND / UNK。",
+      _instructions: "【AI与本地数据整理标准JSON模版】可将单例或多例受试者对象放入 subjects 数组中。导入时不仅导入量表总分(score)，还会将 scales.<量表名>.details 中的逐项评分细则直接回填至“展开量表细则算分”弹窗中并自动核算总分。缺失值请填 NA / ND / UNK。",
+      _scaleDetailsReference: {
+        GCS: "details: { eye: 1~4, verbal: 1~5, motor: 1~6 }",
+        NIHSS: "details: { '1a':0~3, '1b':0~2, '1c':0~2, '2':0~2, '3':0~3, '4':0~3, '5a':0~4或9, '5b':0~4或9, '6a':0~4或9, '6b':0~4或9, '7':0~2或9, '8':0~2, '9':0~3, '10':0~2或9, '11':0~2 }",
+        SOFA: "details: { resp:0~4, coag:0~4, liver:0~4, cardio:0~4, cns:0~4, renal:0~4 }, measured: { resp:'氧合指数', coag:'PLT', liver:'TBIL', cardio:'MAP', cns:'GCS', renal:'Cr' }",
+        FOIS: "details: { level: 1~7 }",
+        EQ5D: "details: { mobility:1~3, selfcare:1~3, activity:1~3, pain:1~3, anxiety:1~3 }, vas: 0~100",
+        MRS: "details: { grade: 0~6 }"
+      },
       project: "重症卒中相关性肺炎多组学预测标志物筛选及针刺多靶点调控机制研究",
       version: "1.0",
       subjects: [sample]
@@ -543,13 +770,19 @@ window.EDC_API = {
   // 生成供数据录入员复制到 AI（DeepSeek/ChatGPT/Kimi/Claude）的病历结构化提取提示词
   getAIPromptText(currentUser) {
     const u = currentUser || { account: "dr_wangqiang", name: "王强" };
-    return `你是一名严谨的神经重症临床科研数据提取助手。请根据我提供的患者病历/出院小结/检验报告，结合我上传的《重症卒中CRF_AI数据整理导入标准模版.json》（或CSV模版），将患者信息提取为完全符合该模版字段结构的 JSON 数据（直接输出纯 JSON 代码块，包含顶层 "subjects": [ ... ]）。
+    return `你是一名严谨的神经重症临床科研数据提取助手。请根据我提供的患者病历/出院小结/检验报告/量表评估记录，结合我上传的《重症卒中CRF_AI数据整理导入标准模版.json》（或CSV模版），将患者信息提取为完全符合该模版字段结构的 JSON 数据（直接输出纯 JSON 代码块，包含顶层 "subjects": [ ... ]）。
 提取规则：
 1. 患者编号(id)为三位数字字符串（如 "005"），姓名缩写(initials)按规则生成三位大写字母（三字填首字母；两字加填第二字第二字母；四字填前三字首字母）。
 2. 首次录入负责人账号(ownerAccount)默认填 "${u.account}"，负责人姓名(ownerName)默认填 "${u.name}"。
-3. 实验室检查项（如 v1.labs.wbc、neut、lymph、crp、pct、plt、ddimer、inr、aptt、fib、alb、palb、hb、glu、scr、tbil、pao2_fio2、il2、il4、il6、ifn_gamma、il10、tnf_alpha）格式均为 {"val": "数值", "eval": "0或1或2或9", "note": "备注"}，其中 eval: "0"=正常, "1"=异常无意义, "2"=异常有意义, "9"=未查(ND)。
-4. 若某项选择“其他”，请将具体说明填入对应的 _other 字段（如 ethnicityOther、occupationOther、toastOther、tcmSyndromeOther 等）。
-5. 未查项目填 "ND"，不适用填 "NA"，不详填 "UNK"。`;
+3. 实验室检查项（如 v1.labs.wbc、neut、lymph、crp、pct、plt、ddimer、inr、aptt、fib、alb、palb、hb、glu、scr、tbil、pao2_fio2、il2、il4、il6、ifn_gamma、il10、tnf_alpha）格式均为 {"val": "数值", "eval": "0或1或2或9", "note": "备注"}，其中 eval: "0"=正常, "1"=异常但无临床意义, "2"=异常且有临床意义, "9"=未查(ND)。
+4. 【重要：临床量表不仅要填总分 score，还必须尽可能根据病历查体记录提取填充 details 逐项评分细则，以便系统“展开量表细则算分”直接展示每一项】：
+   - GCS.details: {"eye": 1~4, "verbal": 1~5, "motor": 1~6}
+   - NIHSS.details (15项): {"1a":0~3, "1b":0~2, "1c":0~2, "2":0~2, "3":0~3, "4":0~3, "5a":0~4, "5b":0~4, "6a":0~4, "6b":0~4, "7":0~2, "8":0~2, "9":0~3, "10":0~2, "11":0~2}
+   - SOFA.details (6项): {"resp":0~4, "coag":0~4, "liver":0~4, "cardio":0~4, "cns":0~4, "renal":0~4} 及 measured 实测值 {"resp":"氧合指数", "coag":"PLT", "liver":"TBIL", "cardio":"MAP", "cns":"GCS", "renal":"Cr"}
+   - FOIS.details: {"level": 1~7}
+   - EQ5D.details: {"mobility":1~3, "selfcare":1~3, "activity":1~3, "pain":1~3, "anxiety":1~3} 以及 vas (0~100)
+   - MRS.details: {"grade": 0~6}
+5. 若某项选择“其他”，请将具体说明填入对应的 _other 字段（如 ethnicityOther、occupationOther、toastOther、tcmSyndromeOther 等）。未查项目填 "ND"，不适用填 "NA"，不详填 "UNK"。`;
   },
 
   // 深度合并工具（保证导入的残缺 JSON 仍拥有完整的默认属性树）
@@ -641,11 +874,12 @@ window.EDC_API = {
         base.id = id;
         if (!base.ownerAccount) base.ownerAccount = u.account;
         if (!base.ownerName) base.ownerName = u.name;
+        this.reconcileSubjectScales(base);
         base.auditLogs = base.auditLogs || [];
         base.auditLogs.unshift({
           time: new Date().toLocaleString("zh-CN"),
           user: `${u.name} (${u.account})`,
-          action: "通过 JSON 一键导入/更新病例数据",
+          action: "通过 JSON 一键导入/更新病例数据（含详细量表细则）",
           field: `患者编号: ${id} | 绑定负责人: ${base.ownerName} (${base.ownerAccount})`
         });
         importedList.push(base);
@@ -713,19 +947,59 @@ window.EDC_API = {
         mapLab("V1_TNFa", "tnf_alpha");
 
         if (getCol("V1_GCS") !== "") s.v1.scales.GCS.score = getCol("V1_GCS");
+        if (getCol("V1_GCS_细则")) {
+          const d = this.parseScaleDetailsString("GCS", getCol("V1_GCS_细则"));
+          if (d) s.v1.scales.GCS.details = d;
+        }
         if (getCol("V1_NIHSS") !== "") s.v1.scales.NIHSS.score = getCol("V1_NIHSS");
+        if (getCol("V1_NIHSS_15项细则")) {
+          const d = this.parseScaleDetailsString("NIHSS", getCol("V1_NIHSS_15项细则"));
+          if (d) s.v1.scales.NIHSS.details = d;
+        }
         if (getCol("V1_SOFA") !== "") s.v1.scales.SOFA.score = getCol("V1_SOFA");
+        if (getCol("V1_SOFA_6项细则")) {
+          const d = this.parseScaleDetailsString("SOFA", getCol("V1_SOFA_6项细则"));
+          if (d) s.v1.scales.SOFA.details = d;
+        }
         if (getCol("V1_FOIS") !== "") s.v1.scales.FOIS.score = getCol("V1_FOIS");
+        if (getCol("V1_EQ5D_5维细则")) {
+          const d = this.parseScaleDetailsString("EQ5D", getCol("V1_EQ5D_5维细则"));
+          if (d) s.v1.scales.EQ5D.details = d;
+        }
         if (getCol("V1_EQ5D_VAS") !== "") s.v1.scales.EQ5D.vas = getCol("V1_EQ5D_VAS");
 
         if (getCol("V2_1_D3_GCS") !== "") s.v2_1.scales.GCS.score = getCol("V2_1_D3_GCS");
+        if (getCol("V2_1_D3_GCS_细则")) {
+          const d = this.parseScaleDetailsString("GCS", getCol("V2_1_D3_GCS_细则"));
+          if (d) s.v2_1.scales.GCS.details = d;
+        }
         if (getCol("V2_1_D3_NIHSS") !== "") s.v2_1.scales.NIHSS.score = getCol("V2_1_D3_NIHSS");
+        if (getCol("V2_1_D3_NIHSS_15项细则")) {
+          const d = this.parseScaleDetailsString("NIHSS", getCol("V2_1_D3_NIHSS_15项细则"));
+          if (d) s.v2_1.scales.NIHSS.details = d;
+        }
         if (getCol("V2_1_D3_SOFA") !== "") s.v2_1.scales.SOFA.score = getCol("V2_1_D3_SOFA");
+        if (getCol("V2_1_D3_SOFA_6项细则")) {
+          const d = this.parseScaleDetailsString("SOFA", getCol("V2_1_D3_SOFA_6项细则"));
+          if (d) s.v2_1.scales.SOFA.details = d;
+        }
         if (getCol("V2_1_D3_FOIS") !== "") s.v2_1.scales.FOIS.score = getCol("V2_1_D3_FOIS");
 
         if (getCol("V2_2_D7_GCS") !== "") s.v2_2.scales.GCS.score = getCol("V2_2_D7_GCS");
+        if (getCol("V2_2_D7_GCS_细则")) {
+          const d = this.parseScaleDetailsString("GCS", getCol("V2_2_D7_GCS_细则"));
+          if (d) s.v2_2.scales.GCS.details = d;
+        }
         if (getCol("V2_2_D7_NIHSS") !== "") s.v2_2.scales.NIHSS.score = getCol("V2_2_D7_NIHSS");
+        if (getCol("V2_2_D7_NIHSS_15项细则")) {
+          const d = this.parseScaleDetailsString("NIHSS", getCol("V2_2_D7_NIHSS_15项细则"));
+          if (d) s.v2_2.scales.NIHSS.details = d;
+        }
         if (getCol("V2_2_D7_SOFA") !== "") s.v2_2.scales.SOFA.score = getCol("V2_2_D7_SOFA");
+        if (getCol("V2_2_D7_SOFA_6项细则")) {
+          const d = this.parseScaleDetailsString("SOFA", getCol("V2_2_D7_SOFA_6项细则"));
+          if (d) s.v2_2.scales.SOFA.details = d;
+        }
         if (getCol("V2_2_D7_FOIS") !== "") s.v2_2.scales.FOIS.score = getCol("V2_2_D7_FOIS");
 
         const sapVal = getCol("是否确诊SAP");
@@ -742,6 +1016,10 @@ window.EDC_API = {
         if (getCol("V3_出院结局")) s.v3.outcome.status = getCol("V3_出院结局");
         if (getCol("V3_出院mRS") !== "") s.v3.scales.MRS.score = getCol("V3_出院mRS");
         if (getCol("V3_出院NIHSS") !== "") s.v3.scales.NIHSS.score = getCol("V3_出院NIHSS");
+        if (getCol("V3_出院NIHSS_15项细则")) {
+          const d = this.parseScaleDetailsString("NIHSS", getCol("V3_出院NIHSS_15项细则"));
+          if (d) s.v3.scales.NIHSS.details = d;
+        }
 
         if (getCol("V4_D30生存")) s.v4.survival.alive = getCol("V4_D30生存");
         if (getCol("V4_D30_mRS") !== "") s.v4.scales.MRS.score = getCol("V4_D30_mRS");
@@ -756,10 +1034,12 @@ window.EDC_API = {
         if (getCol("是否退出试验")) s.summary.withdrawn = getCol("是否退出试验");
         if (getCol("PI审核签名")) s.summary.piSignature = getCol("PI审核签名");
 
+        this.reconcileSubjectScales(s);
+
         s.auditLogs.unshift({
           time: new Date().toLocaleString("zh-CN"),
           user: `${u.name} (${u.account})`,
-          action: "通过 CSV 宽表一键导入病例数据",
+          action: "通过 CSV 宽表一键导入病例数据（含详细量表细则）",
           field: `患者编号: ${id} | 绑定负责人: ${s.ownerName} (${s.ownerAccount})`
         });
         importedList.push(s);

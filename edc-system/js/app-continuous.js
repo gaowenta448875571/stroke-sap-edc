@@ -632,7 +632,7 @@ Object.assign(window.App, {
   // ==================== 交互式临床量表逐项评分弹窗 (Modal) ====================
   // 修复：给弹窗滚动区绑定 id="edc-scale-modal-body"，App.render() 时自动保留滚动位置，不会滚回顶部
   renderScaleModal() {
-    const { visitKey, scaleKey, tempDetails, tempVas, tempSigner, tempIsAcu } = this.state.scaleModal;
+    const { visitKey, scaleKey, tempDetails, tempMeasured, tempVas, tempSigner, tempIsAcu } = this.state.scaleModal;
     const def = window.CLINICAL_SCALES[scaleKey];
     if (!def) return "";
 
@@ -666,7 +666,7 @@ Object.assign(window.App, {
             <div class="flex items-center gap-4">
               <div class="text-right">
                 <span class="text-xs text-slate-400 block">实时计算得分</span>
-                <span class="text-lg sm:text-xl font-bold text-emerald-400 font-mono">${liveTotal}</span>
+                <span id="edc-scale-live-total" class="text-lg sm:text-xl font-bold text-emerald-400 font-mono">${liveTotal}</span>
               </div>
               <button type="button" onclick="App.closeScaleModal()" class="text-slate-400 hover:text-white text-2xl leading-none">×</button>
             </div>
@@ -678,11 +678,27 @@ Object.assign(window.App, {
             ${def.items
               .map(item => {
                 const curScore = tempDetails[item.id];
+                const curMeasured = tempMeasured?.[item.id] ?? "";
                 return `
                   <div class="border border-slate-200 rounded-xl p-4 space-y-2.5 bg-slate-50/50">
-                    <div class="flex items-center justify-between">
+                    <div class="flex flex-wrap items-center justify-between gap-2">
                       <h4 class="font-bold text-sm text-slate-900">${item.title}</h4>
-                      <span class="text-xs font-mono font-bold text-sky-700">当前项得分: ${curScore ?? "未选"}</span>
+                      <div class="flex items-center gap-3">
+                        ${
+                          item.hasMeasuredInput
+                            ? `
+                          <div class="flex items-center gap-1.5 text-xs">
+                            <span class="text-slate-500">实测值:</span>
+                            <input type="text" value="${String(curMeasured).replace(/"/g, "&quot;")}" placeholder="填实测值"
+                              onchange="App.state.scaleModal.tempMeasured['${item.id}']=this.value"
+                              class="crf-input w-24 py-1 px-2 text-xs font-mono text-center bg-white" />
+                            <span class="text-slate-400">${item.unit || ""}</span>
+                          </div>
+                        `
+                            : ""
+                        }
+                        <span class="text-xs font-mono font-bold text-sky-700">当前项得分: ${curScore ?? "未选"}</span>
+                      </div>
                     </div>
                     ${item.method ? `<p class="text-xs text-slate-500 leading-relaxed">评估方法：${item.method}</p>` : ""}
                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
@@ -712,14 +728,26 @@ Object.assign(window.App, {
             ${
               def.hasVasScore
                 ? `
-              <div class="border border-slate-200 rounded-xl p-4 bg-sky-50/50 space-y-2">
-                <div class="flex items-center justify-between">
-                  <label class="font-bold text-sm text-slate-800">6. 今日健康 VAS 视觉模拟评分 (0 - 100分)</label>
-                  <span class="font-mono font-bold text-lg text-sky-700">${tempVas} 分</span>
+              <div class="border border-sky-200 rounded-xl p-4 bg-sky-50/60 space-y-3">
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                  <label class="font-bold text-sm text-slate-800">6. 今日健康 VAS 视觉模拟评分 (0 - 100分，可左右顺滑拖动或直接输入)</label>
+                  <div class="flex items-center gap-2">
+                    <input id="edc-scale-vas-num" type="number" min="0" max="100" step="1" value="${tempVas}"
+                      oninput="App.updateScaleModalVas(this.value, 'num')"
+                      class="crf-input w-20 py-1 px-2 text-center font-mono font-bold text-base text-sky-700 bg-white border-sky-300" />
+                    <span id="edc-scale-vas-display" class="font-mono font-bold text-lg text-sky-700">${tempVas} 分</span>
+                  </div>
                 </div>
-                <input type="range" min="0" max="100" value="${tempVas}"
-                  oninput="App.state.scaleModal.tempVas=this.value;App.render()"
-                  class="w-full accent-sky-600" />
+                <input id="edc-scale-vas-range" type="range" min="0" max="100" step="1" value="${tempVas}"
+                  oninput="App.updateScaleModalVas(this.value, 'range')"
+                  class="w-full h-2.5 bg-slate-200 rounded-lg cursor-pointer accent-sky-600" />
+                <div class="flex justify-between text-[11px] text-slate-500 font-mono px-0.5">
+                  <span>0分 (想象中最差健康状况)</span>
+                  <span>25分</span>
+                  <span>50分</span>
+                  <span>75分</span>
+                  <span>100分 (想象中最好健康状况)</span>
+                </div>
               </div>
             `
                 : ""
@@ -764,7 +792,7 @@ Object.assign(window.App, {
               <button type="button" onclick="App.closeScaleModal()" class="px-4 py-2 rounded-lg border border-slate-300 text-xs font-medium text-slate-600 hover:bg-slate-100">
                 取消
               </button>
-              <button type="button" onclick="App.saveScaleModal()" class="px-5 py-2 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold shadow">
+              <button id="edc-scale-confirm-btn" type="button" onclick="App.saveScaleModal()" class="px-5 py-2 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold shadow">
                 ✓ 确认算分并回填 (${liveTotal})
               </button>
             </div>
