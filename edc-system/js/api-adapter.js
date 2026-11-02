@@ -17,7 +17,9 @@ window.EDC_API = {
       (window.location.protocol === "http:" || window.location.protocol === "https:");
     return {
       mode: "local", // 'local' | 'remote'
-      baseUrl: isHttpOrigin ? `${window.location.origin}/api/v1` : "http://127.0.0.1:8000/api/v1",
+      baseUrl: isHttpOrigin
+        ? `${window.location.origin}/api/v1`
+        : "https://stroke-sap-edc-system.onrender.com/api/v1",
       token: ""
     };
   },
@@ -40,6 +42,7 @@ window.EDC_API = {
         candidates.push(`${window.location.origin}/api/v1`);
       }
       candidates.push("http://127.0.0.1:8000/api/v1");
+      candidates.push("https://stroke-sap-edc-system.onrender.com/api/v1");
 
       for (const candidateUrl of candidates) {
         try {
