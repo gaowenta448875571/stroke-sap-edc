@@ -1,0 +1,27 @@
+name: Keep Supabase & Render EDC Active
+
+on:
+  # 每 2 天（逢单数日 UTC 02:00 / 北京时间 10:00）自动触发一次，防止 Supabase 免费库超过 7 天无活动被暂停
+  schedule:
+    - cron: '0 2 */2 * *'
+  # 支持在 GitHub Actions 页面随时手动点击 "Run workflow" 立即测试激活
+  workflow_dispatch:
+
+jobs:
+  ping-edc-and-supabase:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wake up Render Backend & Query Supabase Database
+        env:
+          EDC_BACKEND_URL: ${{ secrets.EDC_BACKEND_URL }}
+        run: |
+          if [ -z "$EDC_BACKEND_URL" ]; then
+            echo "请在 GitHub 仓库 Settings -> Secrets and variables -> Actions 中添加名为 EDC_BACKEND_URL 的 Secret（例如: https://stroke-sap-edc-system.onrender.com）"
+            exit 0
+          fi
+          TARGET="${EDC_BACKEND_URL%/}/api/v1/health"
+          echo "正在访问健康检查与数据库保活接口: $TARGET"
+          # Render 免费版休眠唤醒可能需要 30~50 秒，因此设置 --max-time 90 并重试 3 次
+          curl -f -sS --retry 3 --retry-delay 10 --max-time 90 "$TARGET" | tee response.json
+          echo ""
+          echo "✓ Supabase 数据库与 Render 后端服务保活成功！"

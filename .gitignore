@@ -1,0 +1,15 @@
+# Environment variables & secrets
+.env
+edc-backend/.env
+
+# Local databases & caches
+*.db
+*.sqlite3
+__pycache__/
+*.py[cod]
+.DS_Store
+
+# Local clinical documents & macOS launch scripts
+*.doc
+*.docx
+*.command

@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: stroke-sap-edc-system
+    runtime: python
+    plan: free
+    buildCommand: pip install -r edc-backend/requirements.txt
+    startCommand: cd edc-backend && uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: EDC_SECRET_KEY
+        value: stroke-sap-edc-secret-key-2026
