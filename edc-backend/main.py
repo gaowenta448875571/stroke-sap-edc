@@ -210,6 +210,32 @@ def init_db():
                 (acc, pwd, name, role, dept, is_pi, exp, unl, mgr, st, now_str),
             )
 
+    # 自动将早期内置演示受试者 (001~004) 的旧负责人账号迁移至当前团队真实账号
+    legacy_owner_map = {
+        "001": ("dr_liguiwei", "李桂伟"),
+        "002": ("dr_gaowentao", "高文涛"),
+        "003": ("dr_liruiying", "李蕊影"),
+        "004": ("dr_yule", "余乐"),
+    }
+    try:
+        subj_rows = db_fetchall("SELECT id, data_json FROM subjects")
+        for srow in subj_rows:
+            sid = srow.get("id")
+            if sid in legacy_owner_map:
+                obj = json.loads(srow["data_json"])
+                if obj.get("ownerAccount") in ("dr_lihua", "dr_wangqiang", "dr_zhangmin"):
+                    new_acc, new_name = legacy_owner_map[sid]
+                    obj["ownerAccount"] = new_acc
+                    obj["ownerName"] = new_name
+                    if obj.get("investigator") in ("李华", "王强", "张敏"):
+                        obj["investigator"] = new_name
+                    db_execute(
+                        "UPDATE subjects SET data_json = ? WHERE id = ?",
+                        (json.dumps(obj, ensure_ascii=False), sid),
+                    )
+    except Exception:
+        pass
+
 
 try:
     init_db()
