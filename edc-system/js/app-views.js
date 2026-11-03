@@ -551,22 +551,131 @@ Object.assign(window.App, {
             </div>
 
             <!-- 主诉与现病史 -->
-            <div class="space-y-3">
-              <label class="text-xs font-bold text-slate-700 block">主诉与现病史核心要素</label>
-              <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <span class="text-xs text-slate-500 block mb-1">主要表现（多选）：</span>
-                  ${this.renderCheckboxGroup("v1.history.mainSymptoms", h.mainSymptoms, ["意识障碍", "言语障碍", "肢体无力/瘫痪", "头晕/眩晕", "剧烈头痛", "呕吐", "抽搐", "其他"], "主诉症状")}
+            <div class="space-y-3 bg-slate-50/70 p-4 rounded-xl border border-slate-200">
+              <label class="text-xs font-bold text-slate-800 block">主诉与现病史核心要素</label>
+              <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <div class="space-y-2.5 bg-white p-3.5 rounded-xl border border-slate-200/90">
+                  <span class="text-xs font-semibold text-sky-800 block">主要表现（与脑梗死直接相关，可多选）：</span>
+                  ${this.renderCheckboxGroup(
+                    "v1.history.mainSymptoms",
+                    h.mainSymptoms,
+                    [
+                      "意识障碍",
+                      "言语障碍",
+                      "头晕/眩晕",
+                      "剧烈头痛",
+                      "肢体无力/瘫痪",
+                      "肢体麻木/感觉减退",
+                      "饮水呛咳",
+                      "吞咽困难",
+                      "口眼歪斜",
+                      "口角流涎",
+                      "视野缺损/视物重影",
+                      "共济失调/步态不稳",
+                      "抽搐",
+                      "其他"
+                    ],
+                    "主要表现"
+                  )}
+                  ${
+                    (h.mainSymptoms || []).includes("肢体无力/瘫痪")
+                      ? `
+                    <div class="mt-2 p-2.5 rounded-lg bg-sky-50/80 border border-sky-200 space-y-2">
+                      <div class="flex flex-wrap items-center gap-1.5">
+                        <span class="text-[11px] font-bold text-sky-900 shrink-0">↳ 肢体无力/瘫痪部位：</span>
+                        ${["左侧", "右侧", "左上", "左下", "右上", "右下", "两侧"]
+                          .map(side => {
+                            const curSides = Array.isArray(h.limbWeaknessSide)
+                              ? h.limbWeaknessSide
+                              : h.limbWeaknessSide
+                              ? String(h.limbWeaknessSide).split(/[、,，/\s]+/).filter(Boolean)
+                              : [];
+                            const active = curSides.includes(side);
+                            return `
+                              <label onclick="App.toggleLimbSymptomSide('v1.history.limbWeaknessSide', '${side}', '肢体无力/瘫痪部位')"
+                                class="crf-option-pill text-xs py-0.5 px-2 ${active ? "active" : ""}">
+                                <span>${active ? "☑" : "□"}</span>
+                                <span>${side}</span>
+                              </label>
+                            `;
+                          })
+                          .join("")}
+                      </div>
+                      <div class="flex items-center gap-2">
+                        <span class="text-[11px] font-semibold text-slate-600 shrink-0">部位/肌力备注：</span>
+                        <input type="text" value="${String(h.limbWeaknessNote || "").replace(/"/g, "&quot;")}"
+                          placeholder="可补充备注（如：右侧偏瘫，右上肢肌力1级、右下肢2级）..."
+                          onchange="App.setByPath('v1.history.limbWeaknessNote', this.value, '肢体无力/瘫痪备注', true)"
+                          class="crf-input text-xs py-1 px-2.5 flex-1 bg-white" />
+                      </div>
+                    </div>
+                  `
+                      : ""
+                  }
+                  ${
+                    (h.mainSymptoms || []).includes("肢体麻木/感觉减退")
+                      ? `
+                    <div class="mt-2 p-2.5 rounded-lg bg-sky-50/80 border border-sky-200 space-y-2">
+                      <div class="flex flex-wrap items-center gap-1.5">
+                        <span class="text-[11px] font-bold text-sky-900 shrink-0">↳ 肢体麻木/感觉减退部位：</span>
+                        ${["左侧", "右侧", "左上", "左下", "右上", "右下", "两侧"]
+                          .map(side => {
+                            const curSides = Array.isArray(h.limbNumbnessSide)
+                              ? h.limbNumbnessSide
+                              : h.limbNumbnessSide
+                              ? String(h.limbNumbnessSide).split(/[、,，/\s]+/).filter(Boolean)
+                              : [];
+                            const active = curSides.includes(side);
+                            return `
+                              <label onclick="App.toggleLimbSymptomSide('v1.history.limbNumbnessSide', '${side}', '肢体麻木部位')"
+                                class="crf-option-pill text-xs py-0.5 px-2 ${active ? "active" : ""}">
+                                <span>${active ? "☑" : "□"}</span>
+                                <span>${side}</span>
+                              </label>
+                            `;
+                          })
+                          .join("")}
+                      </div>
+                      <div class="flex items-center gap-2">
+                        <span class="text-[11px] font-semibold text-slate-600 shrink-0">麻木备注：</span>
+                        <input type="text" value="${String(h.limbNumbnessNote || "").replace(/"/g, "&quot;")}"
+                          placeholder="可补充肢体麻木/感觉减退具体范围或备注..."
+                          onchange="App.setByPath('v1.history.limbNumbnessNote', this.value, '肢体麻木备注', true)"
+                          class="crf-input text-xs py-1 px-2.5 flex-1 bg-white" />
+                      </div>
+                    </div>
+                  `
+                      : ""
+                  }
                 </div>
-                <div>
-                  <span class="text-xs text-slate-500 block mb-1">伴随情况（多选）：</span>
-                  ${this.renderCheckboxGroup("v1.history.accompany", h.accompany, ["饮水呛咳", "吞咽困难", "呃逆", "发热", "咳嗽/咳痰", "大小便失禁", "其他"], "伴随情况")}
+                <div class="space-y-2.5 bg-white p-3.5 rounded-xl border border-slate-200/90">
+                  <span class="text-xs font-semibold text-teal-800 block">伴随情况（诱因或间接相关症状，可多选）：</span>
+                  ${this.renderCheckboxGroup(
+                    "v1.history.accompany",
+                    h.accompany,
+                    [
+                      "呕吐",
+                      "恶心",
+                      "呃逆",
+                      "发热",
+                      "咳嗽咳痰",
+                      "呼吸急促/喘憋",
+                      "大小便失禁",
+                      "尿潴留/排尿困难",
+                      "躁动不安/谵妄",
+                      "情绪激动/劳累诱发",
+                      "睡眠中起病(醒后卒中)",
+                      "跌倒/外伤",
+                      "其他"
+                    ],
+                    "伴随情况"
+                  )}
                 </div>
               </div>
               <div>
                 <label class="text-xs text-slate-500 block mb-1">补充病程（含转诊经过、用药及重要阴性症状）：</label>
                 <textarea rows="2" onchange="App.setByPath('v1.history.hpiNarrative', this.value, '现病史描述', true)"
-                  class="crf-input">${h.hpiNarrative || ""}</textarea>
+                  class="crf-input bg-white">${h.hpiNarrative || ""}</textarea>
               </div>
             </div>
 

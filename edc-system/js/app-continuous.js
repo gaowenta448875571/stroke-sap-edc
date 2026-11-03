@@ -229,9 +229,26 @@ Object.assign(window.App, {
                   .map(
                     (m, idx) => `
                   <tr class="${m.used === "是" ? "bg-sky-50/40" : ""}">
-                    <td class="text-xs font-bold text-slate-600">${m.category}</td>
+                    <td class="text-xs font-bold text-slate-600">
+                      ${
+                        idx < (window.CRF_CONFIG?.presetMedications?.length || 20)
+                          ? m.category || "预设药物"
+                          : `<div class="flex items-center gap-1">
+                              <input type="text" value="${m.category || "其他西药/中成药"}" placeholder="西药/中成药"
+                                onchange="App.setByPath('treatment.medications.${idx}.category', this.value, '药物种类', true)"
+                                class="crf-input text-xs py-1 px-1.5 font-semibold" />
+                            </div>`
+                      }
+                    </td>
                     <td>
-                      <input type="text" value="${m.name}" onchange="App.setByPath('treatment.medications.${idx}.name', this.value, '药物名称', true)" class="crf-input font-semibold" />
+                      <div class="flex items-center gap-1">
+                        <input type="text" value="${m.name || ""}" onchange="App.setByPath('treatment.medications.${idx}.name', this.value, '药物名称', true)" class="crf-input font-semibold flex-1" />
+                        ${
+                          idx >= (window.CRF_CONFIG?.presetMedications?.length || 20)
+                            ? `<button type="button" title="删除该自定义药物行" onclick="App.removeArrayIdx('treatment.medications', ${idx})" class="text-rose-600 hover:text-rose-800 text-xs shrink-0 px-1">✕</button>`
+                            : ""
+                        }
+                      </div>
                     </td>
                     <td>${this.renderRadioGroup(`treatment.medications.${idx}.used`, m.used, ["是", "否"], m.name)}</td>
                     <td class="min-w-[160px]"><input type="text" value="${m.reason || ""}" placeholder="填写用药指征/备注..." onchange="App.setByPath('treatment.medications.${idx}.reason', this.value, '${m.name}原因', true)" class="crf-input text-xs w-full" /></td>

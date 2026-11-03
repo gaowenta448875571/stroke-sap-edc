@@ -1,10 +1,11 @@
 // 前后端分离数据接口适配器 (Storage, JWT Auth, Backend Permission & REST API Adapter)
 
-const STORAGE_KEY = "STROKE_SAP_EDC_SUBJECTS_V5";
+const STORAGE_KEY = "STROKE_SAP_EDC_SUBJECTS_V6";
 const API_CONFIG_KEY = "STROKE_SAP_EDC_API_CONFIG_V3";
 const SESSION_KEY = "STROKE_SAP_EDC_AUTH_SESSION_V3";
 const USERS_STORAGE_KEY = "STROKE_SAP_EDC_USERS_V3";
 const REMEMBER_CREDS_KEY = "STROKE_SAP_EDC_REMEMBER_CREDS_V1";
+const PURGE_FLAG_KEY = "STROKE_SAP_EDC_PURGE_20261103";
 
 window.EDC_API = {
   getConfig() {
@@ -366,9 +367,50 @@ window.EDC_API = {
     return await res.json();
   },
 
-  // 加载所有受试者数据
+  // 判断某条受试者记录是否为早期内置测试/演示数据（用于彻底清理遗留测试数据）
+  isLegacyDemoSubject(s) {
+    if (!s || typeof s !== "object") return false;
+    const demoNames = new Set(["张建国", "林淑芬", "王明", "赵秀兰", "刘秀英", "赵铁柱", "孙淑芬"]);
+    const demoHospIds = new Set(["ZY20260502088", "ZY20260610112", "ZY20260701019", "ZY20260412055"]);
+    const name = String(s.name || "").trim();
+    const hospId = String(s.v1?.demographics?.hospitalId || "").trim();
+    return demoNames.has(name) || demoHospIds.has(hospId);
+  },
+
+  // 加载所有受试者数据（已清除全部测试与示范数据，空库时直接返回 []）
   async listSubjects() {
     const cfg = this.getConfig();
+
+    // 首次升级后自动清理本地旧版缓存与云端遗留测试数据
+    try {
+      if (localStorage.getItem(PURGE_FLAG_KEY) !== "done") {
+        ["STROKE_SAP_EDC_SUBJECTS_V1", "STROKE_SAP_EDC_SUBJECTS_V2", "STROKE_SAP_EDC_SUBJECTS_V3", "STROKE_SAP_EDC_SUBJECTS_V4", "STROKE_SAP_EDC_SUBJECTS_V5", STORAGE_KEY].forEach(k => {
+          localStorage.removeItem(k);
+        });
+        if (cfg.mode === "remote") {
+          try {
+            await fetch(`${cfg.baseUrl}/subjects`, {
+              method: "DELETE",
+              headers: cfg.token ? { Authorization: `Bearer ${cfg.token}` } : {}
+            });
+          } catch (e) {}
+          try {
+            await fetch(`${cfg.baseUrl}/subjects/sync`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                ...(cfg.token ? { Authorization: `Bearer ${cfg.token}` } : {})
+              },
+              body: JSON.stringify({ subjects: [], replaceAll: true })
+            });
+          } catch (e) {}
+        }
+        localStorage.setItem(PURGE_FLAG_KEY, "done");
+        localStorage.setItem(STORAGE_KEY, JSON.stringify([]));
+        return [];
+      }
+    } catch (e) {}
+
     if (cfg.mode === "remote") {
       try {
         const res = await fetch(`${cfg.baseUrl}/subjects`, {
@@ -376,15 +418,19 @@ window.EDC_API = {
         });
         if (res.ok) {
           const remoteList = await res.json();
-          if (Array.isArray(remoteList) && remoteList.length > 0) {
-            remoteList.forEach(s => this.reconcileSubjectScales(s));
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(remoteList));
-            return remoteList;
+          if (Array.isArray(remoteList)) {
+            const cleanList = remoteList.filter(s => !this.isLegacyDemoSubject(s));
+            if (cleanList.length !== remoteList.length) {
+              // 若云端仍有遗留的旧演示患者，立即同步清除
+              await this.saveSubjects(cleanList, true);
+            }
+            cleanList.forEach(s => {
+              this.reconcileSubjectScales(s);
+              this.reconcileSubjectHistoryAndLabs(s);
+            });
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(cleanList));
+            return cleanList;
           }
-          // 若远程 Supabase 数据库首次启用尚无受试者，自动初始化示范数据并同步至云端
-          const initialRemote = window.createInitialSampleSubjects();
-          await this.saveSubjects(initialRemote);
-          return initialRemote;
         }
       } catch (e) {
         console.warn("远程后端未连接，自动回退至本地存储模式:", e);
@@ -395,23 +441,27 @@ window.EDC_API = {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          parsed.forEach(s => this.reconcileSubjectScales(s));
-          return parsed;
+        if (Array.isArray(parsed)) {
+          const cleanLocal = parsed.filter(s => !this.isLegacyDemoSubject(s));
+          cleanLocal.forEach(s => {
+            this.reconcileSubjectScales(s);
+            this.reconcileSubjectHistoryAndLabs(s);
+          });
+          return cleanLocal;
         }
       }
     } catch (e) {
       console.error("读取本地受试者数据失败:", e);
     }
 
-    const initial = window.createInitialSampleSubjects();
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(initial));
-    return initial;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify([]));
+    return [];
   },
 
   // 保存受试者数据
-  async saveSubjects(subjects) {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(subjects));
+  async saveSubjects(subjects, replaceAll = true) {
+    const list = Array.isArray(subjects) ? subjects : [];
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
     const cfg = this.getConfig();
     if (cfg.mode === "remote") {
       try {
@@ -421,7 +471,7 @@ window.EDC_API = {
             "Content-Type": "application/json",
             ...(cfg.token ? { Authorization: `Bearer ${cfg.token}` } : {})
           },
-          body: JSON.stringify({ subjects })
+          body: JSON.stringify({ subjects: list, replaceAll: Boolean(replaceAll) })
         });
       } catch (e) {
         console.warn("远程同步暂未就绪，已安全保存在本地浏览器:", e);
@@ -430,11 +480,43 @@ window.EDC_API = {
     return true;
   },
 
-  // 重置为初始演示数据
+  // 删除单个受试者并同步云端
+  async deleteSubjectById(subjectId, existingSubjects) {
+    const nextList = (existingSubjects || []).filter(s => s.id !== subjectId);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(nextList));
+    const cfg = this.getConfig();
+    if (cfg.mode === "remote") {
+      try {
+        await fetch(`${cfg.baseUrl}/subjects/${encodeURIComponent(subjectId)}`, {
+          method: "DELETE",
+          headers: cfg.token ? { Authorization: `Bearer ${cfg.token}` } : {}
+        });
+      } catch (e) {}
+      await this.saveSubjects(nextList, true);
+    }
+    return nextList;
+  },
+
+  // 清空全部受试者数据并同步云端
+  async clearAllSubjects() {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify([]));
+    const cfg = this.getConfig();
+    if (cfg.mode === "remote") {
+      try {
+        await fetch(`${cfg.baseUrl}/subjects`, {
+          method: "DELETE",
+          headers: cfg.token ? { Authorization: `Bearer ${cfg.token}` } : {}
+        });
+      } catch (e) {}
+      await this.saveSubjects([], true);
+    }
+    return [];
+  },
+
+  // 兼容旧调用：返回空数组
   resetDemoData() {
-    const initial = window.createInitialSampleSubjects();
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(initial));
-    return initial;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify([]));
+    return [];
   },
 
   // 量表细则字符串序列化与解析辅助函数（支持 CSV 与 JSON 导入导出完整保留“展开量表细则算分”中每一项得分）
@@ -724,7 +806,7 @@ window.EDC_API = {
   // 下载供 AI 整理或本地填报的 JSON 标准模版（不含患者编号与负责人信息，导入时自动生成与匹配）
   downloadJSONTemplate(currentUser) {
     const u = currentUser || { account: "dr_gaowentao", name: "高文涛", role: "24专硕研究生" };
-    const sample = window.createEmptySubject("", window.getTodayDateStr(), u);
+        const sample = window.createEmptySubject("", window.getTodayDateStr(), u);
     delete sample.id;
     delete sample.ownerAccount;
     delete sample.ownerName;
@@ -738,14 +820,42 @@ window.EDC_API = {
     sample.v1.demographics.birthDate = "1959-08-20";
     sample.v1.demographics.age = 67;
     sample.v1.demographics.phone1 = "13800001111";
+    sample.v1.history.mainSymptoms = ["意识障碍", "言语障碍", "肢体无力/瘫痪", "饮水呛咳", "吞咽困难", "口眼歪斜"];
+    sample.v1.history.limbWeaknessSide = "右侧";
+    sample.v1.history.limbWeaknessNote = "右上肢肌力1级、右下肢肌力2级";
+    sample.v1.history.accompany = ["呕吐", "咳嗽咳痰"];
     sample.v1.labs = {
       wbc: { val: "10.5", eval: "2", note: "轻度升高" },
       neut: { val: "8.1", eval: "2", note: "" },
       lymph: { val: "1.35", eval: "0", note: "" },
       nlr: { val: "6.00", eval: "2", note: "自动计算" },
       crp: { val: "18.2", eval: "2", note: "" },
-      pct: { val: "0.08", eval: "1", note: "" }
+      pct: { val: "ND", eval: "9", note: "未查填ND且eval为9" }
     };
+    // 示范西药+中成药记录（预设药品应用时设 used:"是"；若患者使用了非预设西药或中成药，可直接追加在数组末尾）
+    (sample.treatment.medications || []).forEach(m => {
+      if (m.name === "阿司匹林") {
+        Object.assign(m, { used: "是", reason: "抗血小板聚集", dose: "100", unit: "mg", freq: "qd", route: "PO/NG", startDate: window.getTodayDateStr(), endDate: "" });
+      } else if (m.name === "阿托伐他汀") {
+        Object.assign(m, { used: "是", reason: "强化调脂稳斑", dose: "20", unit: "mg", freq: "qn", route: "PO/NG", startDate: window.getTodayDateStr(), endDate: "" });
+      } else if (m.name === "依达拉奉右莰醇") {
+        Object.assign(m, { used: "是", reason: "改善脑代谢与神经保护", dose: "15", unit: "ml", freq: "bid", route: "IV", startDate: window.getTodayDateStr(), endDate: "" });
+      } else if (m.name === "醒脑治瘫胶囊") {
+        Object.assign(m, { used: "是", reason: "醒脑开窍通络", dose: "4", unit: "粒", freq: "tid", route: "PO/NG", startDate: window.getTodayDateStr(), endDate: "" });
+      }
+    });
+    sample.treatment.medications.push({
+      category: "其他西药",
+      name: "泮托拉唑钠注射液",
+      used: "是",
+      reason: "预防应激性溃疡",
+      dose: "40",
+      unit: "mg",
+      freq: "qd",
+      route: "IV",
+      startDate: window.getTodayDateStr(),
+      endDate: ""
+    });
     // 完整填充 V2-1、V2-2、V3、V4、V5 的量表细则结构示范，确保 AI 可直接按此结构输出逐项细则
     sample.v2_1.scales = {
       GCS: { score: 13, signer: "", isAcupuncturist: "否", details: { eye: 3, verbal: 4, motor: 6 } },
@@ -863,18 +973,335 @@ window.EDC_API = {
 
   // 生成供数据录入员复制到 AI（DeepSeek/ChatGPT/Kimi/Claude）的病历结构化提取提示词
   getAIPromptText() {
-    return `你是一名严谨的神经重症临床科研数据提取助手。请根据我提供的患者病历/出院小结/检验报告/量表评估记录，结合我上传的《重症卒中CRF_AI数据整理导入标准模版.json》（或CSV模版），将患者信息提取为完全符合该模版字段结构的 JSON 数据（直接输出纯 JSON 代码块，包含顶层 "subjects": [ ... ]）。
+    return `你是一名严谨的神经重症临床科研数据提取助手。请根据我提供的患者病历/出院小结/检验报告/量表评估与医嘱用药记录，结合我上传的《重症卒中CRF_AI数据整理导入标准模版.json》（或CSV模版），将患者信息提取为完全符合该模版字段结构的 JSON 数据（直接输出纯 JSON 代码块，包含顶层 "subjects": [ ... ]）。
 提取规则：
 1. 姓名缩写(initials)按规则生成三位大写字母（三字填首字母；两字加填第二字第二字母；四字填前三字首字母）。无需填写患者编号或录入负责人信息，系统导入时会自动按顺位生成编号并匹配当前登录账号。
-2. 实验室检查项（如 v1.labs.wbc、neut、lymph、crp、pct、plt、ddimer、inr、aptt、fib、alb、palb、hb、glu、scr、tbil、pao2_fio2、il2、il4、il6、ifn_gamma、il10、tnf_alpha）格式均为 {"val": "数值", "eval": "0或1或2或9", "note": "备注"}，其中 eval: "0"=正常, "1"=异常但无临床意义, "2"=异常且有临床意义, "9"=未查(ND)。
-3. 【重要：临床量表不仅要填总分 score，还必须尽可能根据病历查体记录提取填充 details 逐项评分细则，以便系统“展开量表细则算分”直接展示每一项】：
+2. 【主诉与现病史核心要素 (v1.history)】：
+   - 主要表现 (v1.history.mainSymptoms，多选数组，仅选与脑梗死直接相关症状)：可选值为 ["意识障碍", "言语障碍", "头晕/眩晕", "剧烈头痛", "肢体无力/瘫痪", "肢体麻木/感觉减退", "饮水呛咳", "吞咽困难", "口眼歪斜", "口角流涎", "视野缺损/视物重影", "共济失调/步态不稳", "抽搐", "其他"]。
+   - 若勾选了"肢体无力/瘫痪"，请在 v1.history.limbWeaknessSide 填入部位（可选：左侧/右侧/左上/左下/右上/右下/两侧，多部位用"、"分隔），并在 v1.history.limbWeaknessNote 填入肌力或补充备注；若勾选了"肢体麻木/感觉减退"，同理填入 v1.history.limbNumbnessSide 与 v1.history.limbNumbnessNote。
+   - 伴随情况 (v1.history.accompany，多选数组，选诱因或间接相关症状)：可选值为 ["呕吐", "恶心", "呃逆", "发热", "咳嗽咳痰", "呼吸急促/喘憋", "大小便失禁", "尿潴留/排尿困难", "躁动不安/谵妄", "情绪激动/劳累诱发", "睡眠中起病(醒后卒中)", "跌倒/外伤", "其他"]。
+3. 【实验室检查项与未查(ND)联动规则】：如 v1.labs.wbc、neut、lymph、crp、pct、plt、ddimer、inr、aptt、fib、alb、palb、hb、glu、scr、tbil、pao2_fio2、il2、il4、il6、ifn_gamma、il10、tnf_alpha 格式均为 {"val": "数值", "eval": "0或1或2或9", "note": "备注"}，其中 eval: "0"=正常, "1"=异常但无临床意义, "2"=异常且有临床意义, "9"=未查(ND)。注意：当某项未检查选择 eval:"9" 时，val 必须填入 "ND"。
+4. 【重要：临床量表不仅要填总分 score，还必须根据病历提取填充 details 逐项评分细则，以便系统“展开量表细则算分”直接展示】：
    - GCS.details: {"eye": 1~4, "verbal": 1~5, "motor": 1~6}
    - NIHSS.details (15项): {"1a":0~3, "1b":0~2, "1c":0~2, "2":0~2, "3":0~3, "4":0~3, "5a":0~4, "5b":0~4, "6a":0~4, "6b":0~4, "7":0~2, "8":0~2, "9":0~3, "10":0~2, "11":0~2}
    - SOFA.details (6项): {"resp":0~4, "coag":0~4, "liver":0~4, "cardio":0~4, "cns":0~4, "renal":0~4} 及 measured 实测值 {"resp":"氧合指数", "coag":"PLT", "liver":"TBIL", "cardio":"MAP", "cns":"GCS", "renal":"Cr"}
    - FOIS.details: {"level": 1~7}
    - EQ5D.details: {"mobility":1~3, "selfcare":1~3, "activity":1~3, "pain":1~3, "anxiety":1~3} 以及 vas (0~100)
    - MRS.details: {"grade": 0~6}
-4. 若某项选择“其他”，请将具体说明填入对应的 _other 字段（如 ethnicityOther、occupationOther、toastOther、tcmSyndromeOther 等）。未查项目填 "ND"，不适用填 "NA"，不详填 "UNK"。`;
+5. 【用药记录（西药 + 中成药）(treatment.medications)】：
+   - 数组中每个药物对象格式严格为：{"category": "抗血小板/调脂稳斑药/改善脑循环/降颅压/控制血压/抗生素/中成药/其他西药", "name": "药物名称", "used": "是", "reason": "用药原因或指征", "dose": "单次纯数字剂量(如100)", "unit": "单位(如mg/g/ml/粒/丸)", "freq": "频次(如qd/bid/tid/q8h)", "route": "途径(如PO/NG/IV)", "startDate": "YYYY-MM-DD", "endDate": "YYYY-MM-DD"}。
+   - 若为模版预设的20种药物（阿司匹林、氯吡格雷、替格瑞洛、阿托伐他汀、瑞舒伐他汀、依达拉奉右莰醇、丁苯酞、尤瑞克林、川芎嗪、银杏叶提取物、甘露醇、氨氯地平、头孢哌酮钠舒巴坦钠、多西环素、米诺环素、醒脑治瘫胶囊、益肾养肝合剂、扶正合剂、脑血栓丸、中风丸），请优先使用标准通用名并将实际使用的药物设为 "used": "是"；若患者还使用了其他西药或中成药，请按相同对象格式直接追加到 treatment.medications 数组中（无需列出未使用的其他药物，系统导入时会自动对齐20项预设表并追加自定义药物行）。
+6. 若某项选择“其他”，请将具体说明填入对应的 _other 字段（如 mainSymptoms_other、accompany_other、ethnicityOther、occupationOther、toastOther、tcmSyndromeOther 等）。未查填 "ND"，不适用填 "NA"，不详填 "UNK"。`;
+  },
+
+  // 自动对齐与规范化主诉核心要素（主要表现/肢体无力部位/伴随情况）及实验室未查(9 -> ND)规则
+  reconcileSubjectHistoryAndLabs(subj) {
+    if (!subj) return;
+    const hx = subj.v1?.history;
+    if (hx) {
+      hx.mainSymptoms = Array.isArray(hx.mainSymptoms) ? hx.mainSymptoms : [];
+      hx.accompany = Array.isArray(hx.accompany) ? hx.accompany : [];
+
+      // 将旧版或AI误放在伴随症状里的脑梗死直接表现（饮水呛咳、吞咽困难、口眼歪斜、口角流涎）自动归入主要表现
+      const directStrokeMap = {
+        "饮水呛咳": "饮水呛咳",
+        "呛咳": "饮水呛咳",
+        "吞咽困难": "吞咽困难",
+        "吞咽障碍": "吞咽困难",
+        "口眼歪斜": "口眼歪斜",
+        "口舌歪斜": "口眼歪斜",
+        "面瘫": "口眼歪斜",
+        "口角流涎": "口角流涎",
+        "流涎": "口角流涎"
+      };
+      // 将旧版在主要表现里的呕吐自动归入伴随情况
+      if (hx.mainSymptoms.includes("呕吐") || hx.mainSymptoms.includes("恶心呕吐")) {
+        hx.mainSymptoms = hx.mainSymptoms.filter(x => x !== "呕吐" && x !== "恶心呕吐");
+        if (!hx.accompany.includes("呕吐")) hx.accompany.push("呕吐");
+      }
+
+      const nextAcc = [];
+      hx.accompany.forEach(item => {
+        const s = String(item || "").trim();
+        if (!s) return;
+        if (directStrokeMap[s]) {
+          const targetSym = directStrokeMap[s];
+          if (!hx.mainSymptoms.includes(targetSym)) hx.mainSymptoms.push(targetSym);
+        } else if (s === "咳嗽/咳痰" || s === "咳痰" || s === "咳嗽") {
+          if (!nextAcc.includes("咳嗽咳痰")) nextAcc.push("咳嗽咳痰");
+        } else if (s === "恶心呕吐") {
+          if (!nextAcc.includes("呕吐")) nextAcc.push("呕吐");
+          if (!nextAcc.includes("恶心")) nextAcc.push("恶心");
+        } else {
+          if (!nextAcc.includes(s)) nextAcc.push(s);
+        }
+      });
+      hx.accompany = nextAcc;
+
+      // 规范化主要表现中的肢体无力/瘫痪与部位备注
+      const nextMain = [];
+      hx.mainSymptoms.forEach(item => {
+        const s = String(item || "").trim();
+        if (!s) return;
+        const sideMatch = s.match(/(左侧|右侧|左上|左下|右上|右下|两侧|双侧)/);
+        if (s.includes("无力") || s.includes("瘫") || s.includes("偏瘫") || s.includes("肌力减退")) {
+          if (!nextMain.includes("肢体无力/瘫痪")) nextMain.push("肢体无力/瘫痪");
+          if (sideMatch && !hx.limbWeaknessSide) {
+            hx.limbWeaknessSide = sideMatch[1] === "双侧" ? "两侧" : sideMatch[1];
+          }
+        } else if (s.includes("麻木") || s.includes("感觉减退") || s.includes("偏身感觉")) {
+          if (!nextMain.includes("肢体麻木/感觉减退")) nextMain.push("肢体麻木/感觉减退");
+          if (sideMatch && !hx.limbNumbnessSide) {
+            hx.limbNumbnessSide = sideMatch[1] === "双侧" ? "两侧" : sideMatch[1];
+          }
+        } else if (directStrokeMap[s]) {
+          const mapped = directStrokeMap[s];
+          if (!nextMain.includes(mapped)) nextMain.push(mapped);
+        } else {
+          if (!nextMain.includes(s)) nextMain.push(s);
+        }
+      });
+      hx.mainSymptoms = nextMain;
+
+      if (Array.isArray(hx.limbWeaknessSide)) {
+        hx.limbWeaknessSide = hx.limbWeaknessSide.join("、");
+      }
+      if (Array.isArray(hx.limbNumbnessSide)) {
+        hx.limbNumbnessSide = hx.limbNumbnessSide.join("、");
+      }
+      if (!hx.limbWeaknessSide && hx.chiefLimbSide && hx.mainSymptoms.includes("肢体无力/瘫痪")) {
+        hx.limbWeaknessSide = hx.chiefLimbSide;
+      }
+      if (hx.limbWeaknessSide) {
+        hx.chiefLimbSide = hx.limbWeaknessSide;
+      }
+    }
+
+    // 实验室检查临床意义评估选择 9 时，自动确保前方数值为 "ND"
+    ["v1", "v2_1", "v2_2"].forEach(vKey => {
+      const labs = subj[vKey]?.labs;
+      if (!labs || typeof labs !== "object") return;
+      Object.keys(labs).forEach(k => {
+        const row = labs[k];
+        if (row && typeof row === "object") {
+          if (String(row.eval) === "9") {
+            row.val = "ND";
+          } else if (String(row.val || "").trim().toUpperCase() === "ND") {
+            row.val = "ND";
+            row.eval = "9";
+          }
+        }
+      });
+    });
+    if (subj.v2_3?.infLabs && typeof subj.v2_3.infLabs === "object") {
+      Object.keys(subj.v2_3.infLabs).forEach(k => {
+        const row = subj.v2_3.infLabs[k];
+        if (row && typeof row === "object") {
+          if (String(row.eval) === "9") {
+            row.done = "否";
+            row.day0 = "ND";
+            row.day3 = "ND";
+          }
+        }
+      });
+    }
+  },
+
+  // 智能对齐与合并导入的用药记录（西药 + 中成药），兼容 AI 输出的各种字段名、商品名、仅输出已用药物列表或混合剂量单位等情况
+  reconcileSubjectMedications(base, rawItem, presetBase) {
+    const cleanPresets = (presetBase || (window.CRF_CONFIG?.presetMedications || [])).map((m, idx) => ({
+      id: "med_" + idx,
+      category: m.category,
+      name: m.name,
+      used: "否",
+      reason: "",
+      dose: "",
+      unit: m.unit || "mg",
+      freq: "",
+      route: m.route || "PO/IV",
+      startDate: "",
+      endDate: ""
+    }));
+
+    // 收集 AI 可能放置用药记录的所有候选路径
+    const rawSources = [];
+    const pushSource = src => {
+      if (!src) return;
+      if (Array.isArray(src)) {
+        rawSources.push(...src);
+      } else if (typeof src === "object") {
+        // 兼容 AI 输出为字典形式 {"阿司匹林": {"dose": "100mg", "freq": "qd"}}
+        Object.keys(src).forEach(k => {
+          const v = src[k];
+          if (v && typeof v === "object" && !Array.isArray(v)) {
+            rawSources.push({ name: k, ...v });
+          } else if (typeof v === "string") {
+            rawSources.push({ name: k, dose: v, used: "是" });
+          }
+        });
+      }
+    };
+
+    pushSource(rawItem?.treatment?.medications);
+    pushSource(rawItem?.treatment?.drugs);
+    pushSource(rawItem?.treatment?.westernMedications);
+    pushSource(rawItem?.treatment?.chineseMedications);
+    pushSource(rawItem?.treatment?.tcmMedications);
+    pushSource(rawItem?.medications);
+    pushSource(rawItem?.drugs);
+
+    if (rawSources.length === 0) {
+      base.treatment.medications = cleanPresets;
+      return;
+    }
+
+    const normDateStr = val => {
+      const s = String(val || "").trim();
+      if (!s || s === "NA" || s === "ND" || s === "UNK") return "";
+      const m = s.match(/(\d{4})[-/.年](\d{1,2})[-/.月](\d{1,2})/);
+      if (m) {
+        return `${m[1]}-${String(m[2]).padStart(2, "0")}-${String(m[3]).padStart(2, "0")}`;
+      }
+      return s.slice(0, 10);
+    };
+
+    const splitDoseAndUnit = (rawDoseVal, rawUnitVal, defaultUnit) => {
+      const dStr = String(rawDoseVal ?? "").trim();
+      const uStr = String(rawUnitVal ?? "").trim();
+      if (!dStr) return { dose: "", unit: uStr || defaultUnit || "" };
+      // 若剂量字符串自带单位（如 "100mg", "0.5g", "20ml", "4粒"）
+      const m = dStr.match(/^([0-9.]+(?:\s*[-~]\s*[0-9.]+)?)\s*([a-zA-Zμ%\u4e00-\u9fa5/]+)$/);
+      if (m) {
+        return {
+          dose: m[1].trim(),
+          unit: uStr || m[2].trim() || defaultUnit || ""
+        };
+      }
+      return {
+        dose: dStr,
+        unit: uStr || defaultUnit || ""
+      };
+    };
+
+    // 20 项预设药物的通用名与临床常见商品名/别名映射表
+    const presetAliasRules = [
+      { idx: 0, keywords: ["阿司匹林", "拜阿司匹灵", "asa"] },
+      { idx: 1, keywords: ["氯吡格雷", "波立维", "泰嘉", "帅信", "帅泰"] },
+      { idx: 2, keywords: ["替格瑞洛", "倍林达"] },
+      { idx: 3, keywords: ["阿托伐他汀", "立普妥", "阿乐", "尤佳"] },
+      { idx: 4, keywords: ["瑞舒伐他汀", "可定", "托妥"] },
+      { idx: 5, keywords: ["依达拉奉", "右莰醇", "先必新", "必存"] },
+      { idx: 6, keywords: ["丁苯酞", "恩必普"] },
+      { idx: 7, keywords: ["尤瑞克林", "凯力康"] },
+      { idx: 8, keywords: ["川芎嗪"] },
+      { idx: 9, keywords: ["银杏叶", "银杏达莫", "金纳多", "舒血宁"] },
+      { idx: 10, keywords: ["甘露醇"] },
+      { idx: 11, keywords: ["氨氯地平", "络活喜", "施慧达", "玄宁"] },
+      { idx: 12, keywords: ["头孢哌酮", "舒普深", "铃兰欣"] },
+      { idx: 13, keywords: ["多西环素", "强力霉素"] },
+      { idx: 14, keywords: ["米诺环素", "美满霉素"] },
+      { idx: 15, keywords: ["醒脑治瘫"] },
+      { idx: 16, keywords: ["益肾养肝"] },
+      { idx: 17, keywords: ["扶正合剂", "扶正"] },
+      { idx: 18, keywords: ["脑血栓丸", "脑血栓片"] },
+      { idx: 19, keywords: ["中风丸", "中风回春"] }
+    ];
+
+    const customRows = [];
+    const isShortExtractedList = rawSources.length < 18;
+
+    rawSources.forEach((rawM, idx) => {
+      if (!rawM) return;
+      const m = typeof rawM === "string" ? { name: rawM, used: "是" } : rawM;
+      const name = String(m.name || m.drugName || m.medicationName || m.drug || m.genericName || m.title || "").trim();
+      if (!name) return;
+
+      const reason = String(m.reason || m.indication || m.purpose || m.note || m.remark || "").trim();
+      const rawDose = m.dose ?? m.dosage ?? m.singleDose ?? m.amount ?? m.spec ?? "";
+      const rawUnit = m.unit || m.doseUnit || "";
+      const freq = String(m.freq || m.frequency || m.times || m.interval || "").trim();
+      const route = String(m.route || m.usage || m.administration || m.way || m.method || "").trim();
+      const startDate = normDateStr(m.startDate || m.start || m.beginDate || m.fromDate || "");
+      const endDate = normDateStr(m.endDate || m.end || m.stopDate || m.toDate || "");
+      const rawCategory = String(m.category || m.type || m.drugCategory || m.drugType || m.class || "").trim();
+
+      const usedStr = String(m.used ?? m.isUsed ?? m.applied ?? "").trim().toLowerCase();
+      const hasClinicalDetail = Boolean(
+        String(rawDose).trim() !== "" ||
+        freq !== "" ||
+        startDate !== "" ||
+        endDate !== "" ||
+        reason !== ""
+      );
+      let isUsed = false;
+      if (["是", "有", "使用", "应用", "已用", "1", "true", "yes"].includes(usedStr)) {
+        isUsed = true;
+      } else if (["否", "无", "未使用", "未应用", "0", "false", "no"].includes(usedStr)) {
+        // 若 AI 保留了模版的 used:"否"，但实际填入了剂量/频次/起止日期，则自动识别为已使用
+        isUsed = hasClinicalDetail;
+      } else {
+        isUsed = hasClinicalDetail || isShortExtractedList;
+      }
+
+      const nameLower = name.toLowerCase();
+      const matchedPreset = presetAliasRules.find(rule =>
+        rule.keywords.some(kw => nameLower.includes(kw.toLowerCase()))
+      );
+
+      if (matchedPreset) {
+        const targetRow = cleanPresets[matchedPreset.idx];
+        if (isUsed) {
+          const { dose, unit } = splitDoseAndUnit(rawDose, rawUnit, targetRow.unit);
+          targetRow.used = "是";
+          if (reason) targetRow.reason = reason;
+          if (dose) targetRow.dose = dose;
+          if (unit) targetRow.unit = unit;
+          if (freq) targetRow.freq = freq;
+          if (route) targetRow.route = route;
+          if (startDate) targetRow.startDate = startDate;
+          if (endDate) targetRow.endDate = endDate;
+        }
+      } else if (isUsed) {
+        // 非预设的西药或中成药，自动判断分类并追加为自定义药物行
+        let category = rawCategory;
+        if (!category || category === "其他" || category === "其他药物") {
+          const isTcmPatent = /(丸|散|膏|丹|合剂|滴丸|颗粒|安宫牛黄|醒脑静|血必净|痰热清|脑心通|通心络|步长|华佗再造|大活络|复方丹参|麝香保心|三七|银杏|疏血通|丹红|苦碟子|灯盏)/.test(name);
+          const isAntibiotic = /(头孢|青霉素|阿莫西林|哌拉西林|他唑巴坦|舒巴坦|美罗培南|亚胺培南|比阿培南|莫西沙星|左氧氟沙星|环丙沙星|万古霉素|替考拉宁|利奈唑胺|替加环素|阿奇霉素|甲硝唑|奥硝唑|氟康唑|伏立康唑|卡泊芬净)/.test(name);
+          category = isTcmPatent ? "中成药" : isAntibiotic ? "抗生素" : "其他西药";
+        }
+        const { dose, unit } = splitDoseAndUnit(rawDose, rawUnit, "mg");
+        const existingCustom = customRows.find(c => c.name === name);
+        if (existingCustom) {
+          Object.assign(existingCustom, {
+            used: "是",
+            category: category || existingCustom.category,
+            reason: reason || existingCustom.reason,
+            dose: dose || existingCustom.dose,
+            unit: unit || existingCustom.unit,
+            freq: freq || existingCustom.freq,
+            route: route || existingCustom.route,
+            startDate: startDate || existingCustom.startDate,
+            endDate: endDate || existingCustom.endDate
+          });
+        } else {
+          customRows.push({
+            id: `med_custom_${idx}_${Date.now()}`,
+            category,
+            name,
+            used: "是",
+            reason,
+            dose,
+            unit: unit || "mg",
+            freq: freq || "qd",
+            route: route || "PO/IV",
+            startDate,
+            endDate
+          });
+        }
+      }
+    });
+
+    base.treatment.medications = [...cleanPresets, ...customRows];
   },
 
   // 深度合并工具（保证导入的残缺 JSON 仍拥有完整的默认属性树）
@@ -968,7 +1395,10 @@ window.EDC_API = {
         const id = item.id && String(item.id).trim() ? String(item.id).trim().padStart(3, "0") : autoId;
         const startDate = item.startDate || item.v1?.eligibility?.enrollDate || window.getTodayDateStr();
         const base = window.createEmptySubject(id, startDate, u);
+        const presetMedsSnapshot = (base.treatment?.medications || []).map(m => ({ ...m }));
         this.deepMergeSubject(base, item);
+        this.reconcileSubjectMedications(base, item, presetMedsSnapshot);
+        this.reconcileSubjectHistoryAndLabs(base);
         base.id = id;
         // 强制根据当前系统登录的账号自动匹配首次录入负责人账号与姓名
         base.ownerAccount = u.account;

@@ -380,6 +380,25 @@ window.App = {
     const lastKey = parts[parts.length - 1];
     cur[lastKey] = val;
 
+    // 实验室检查临床意义评估：选择 9（未查 ND）后，前方自动填入数值 "ND"
+    if (lastKey === "eval" && path.includes(".labs.")) {
+      if (String(val) === "9") {
+        cur.val = "ND";
+      } else if (cur.val === "ND") {
+        cur.val = "";
+      }
+    } else if (lastKey === "eval" && path.includes(".infLabs.")) {
+      if (String(val) === "9") {
+        cur.done = "否";
+        cur.day0 = "ND";
+        cur.day3 = "ND";
+      } else if (cur.day0 === "ND" || cur.day3 === "ND") {
+        cur.done = "是";
+        if (cur.day0 === "ND") cur.day0 = "";
+        if (cur.day3 === "ND") cur.day3 = "";
+      }
+    }
+
     // 若修改了入组日期 startDate，同步更新 v1.eligibility.enrollDate
     if (path === "startDate" && subj.v1?.eligibility) {
       subj.v1.eligibility.enrollDate = val;
@@ -442,6 +461,54 @@ window.App = {
     this.render();
   },
 
+  // 切换肢体无力/麻木部位备注（支持多选部位如 左侧/右侧/左上/左下/右上/右下/两侧）
+  toggleLimbSymptomSide(path, side, labelForAudit = "") {
+    const subj = this.getCurrentSubject();
+    if (!subj) return;
+    if (subj.locked) {
+      this.showToast("当前病例已由主要研究者(PI)审核锁定，不可修改数据！");
+      return;
+    }
+    const raw = this.getByPath(path);
+    const arr = Array.isArray(raw)
+      ? [...raw]
+      : raw
+      ? String(raw).split(/[、,，/\s]+/).filter(Boolean)
+      : [];
+    const idx = arr.indexOf(side);
+    if (idx >= 0) arr.splice(idx, 1);
+    else arr.push(side);
+    const joined = arr.join("、");
+    if (path === "v1.history.limbWeaknessSide" && subj.v1?.history) {
+      subj.v1.history.chiefLimbSide = joined;
+    }
+    this.setByPath(path, joined, labelForAudit);
+  },
+
+  async deleteSubject(subjectId) {
+    const target = this.state.subjects.find(s => s.id === subjectId);
+    if (!target) return;
+    if (!confirm(`确定要彻底删除患者 [${target.id}] ${target.name || target.initials || ""} 的全部记录吗？`)) return;
+    this.state.subjects = await window.EDC_API.deleteSubjectById(subjectId, this.state.subjects);
+    if (this.state.currentSubjectId === subjectId) {
+      this.state.currentSubjectId = this.state.subjects[0]?.id || "";
+    }
+    this.showToast(`已删除患者 [${subjectId}] 数据`);
+    this.render();
+  },
+
+  async handleClearAllSubjects() {
+    if (this.state.subjects.length === 0) {
+      this.showToast("当前系统中已无任何患者数据");
+      return;
+    }
+    if (!confirm(`确定要清空当前系统中的所有 ${this.state.subjects.length} 例患者数据吗？此操作将同步清除云端数据库记录。`)) return;
+    this.state.subjects = await window.EDC_API.clearAllSubjects();
+    this.state.currentSubjectId = "";
+    this.showToast("已清空系统中的所有患者数据");
+    this.render();
+  },
+
   // 自动计算衍生指标（BMI、NLR、PSI 总分等）
   runDerivedCalculations(subj, changedPath = "") {
     const h = parseFloat(subj.v1?.demographics?.height);
@@ -461,11 +528,21 @@ window.App = {
     ["v1", "v2_1", "v2_2"].forEach(vKey => {
       const labs = subj[vKey]?.labs;
       if (labs) {
-        const neut = parseFloat(labs.neut?.val);
-        const lymph = parseFloat(labs.lymph?.val);
-        if (!isNaN(neut) && !isNaN(lymph) && lymph > 0) {
-          if (!labs.nlr) labs.nlr = { val: "", eval: "0", note: "自动计算" };
-          labs.nlr.val = (neut / lymph).toFixed(2);
+        if (String(labs.nlr?.eval) === "9") {
+          labs.nlr.val = "ND";
+        } else if (labs.neut?.val === "ND" || labs.lymph?.val === "ND") {
+          if (!labs.nlr) labs.nlr = { val: "ND", eval: "9", note: "自动计算" };
+          else {
+            labs.nlr.val = "ND";
+            labs.nlr.eval = "9";
+          }
+        } else {
+          const neut = parseFloat(labs.neut?.val);
+          const lymph = parseFloat(labs.lymph?.val);
+          if (!isNaN(neut) && !isNaN(lymph) && lymph > 0) {
+            if (!labs.nlr) labs.nlr = { val: "", eval: "0", note: "自动计算" };
+            labs.nlr.val = (neut / lymph).toFixed(2);
+          }
         }
       }
     });
@@ -1140,10 +1217,16 @@ window.App = {
                 class="px-3.5 py-2 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold shadow-xs transition">
                 ＋ 新增入组受试者
               </button>
-              <button onclick="if(confirm('确定重置为初始临床示范数据吗？')){App.state.subjects=window.EDC_API.resetDemoData();App.render();App.showToast('已恢复初始临床示范数据');}"
-                class="px-3 py-2 rounded-lg bg-white hover:bg-slate-100 text-slate-600 border border-slate-300 text-xs font-medium transition">
-                ↻ 重置示范数据
-              </button>
+              ${
+                this.state.subjects.length > 0
+                  ? `
+                <button onclick="App.handleClearAllSubjects()"
+                  class="px-3 py-2 rounded-lg bg-white hover:bg-rose-50 text-rose-600 border border-rose-200 text-xs font-medium transition">
+                  🗑 清空全部病例
+                </button>
+              `
+                  : ""
+              }
             </div>
           </div>
 
@@ -1168,97 +1251,110 @@ window.App = {
                 </tr>
               </thead>
               <tbody class="divide-y divide-slate-200 text-sm">
-                ${this.state.subjects
-                  .map(s => {
-                    const msMap = {};
-                    this.getSubjectMilestones(s).forEach(m => {
-                      msMap[m.visitId] = m;
-                    });
-                    const ownerAcct = s.ownerAccount || "dr_liguiwei";
-                    const ownerName = s.ownerName || s.investigator || "李桂伟";
+                ${
+                  this.state.subjects.length === 0
+                    ? `<tr>
+                        <td colspan="14" class="py-12 text-center text-slate-400 text-xs">
+                          当前系统暂无受试者数据。请点击右上角 <strong class="text-sky-700">「＋ 新增入组受试者」</strong> 或 <strong class="text-teal-700">「📥 导入CSV/JSON与模版」</strong> 录入患者。
+                        </td>
+                      </tr>`
+                    : this.state.subjects
+                        .map(s => {
+                          const msMap = {};
+                          this.getSubjectMilestones(s).forEach(m => {
+                            msMap[m.visitId] = m;
+                          });
+                          const ownerAcct = s.ownerAccount || "dr_liguiwei";
+                          const ownerName = s.ownerName || s.investigator || "李桂伟";
 
-                    const renderMilestoneCell = visitId => {
-                      const m = msMap[visitId];
-                      if (!m) return "";
-                      return `
-                        <button onclick="App.selectVisit('${visitId}', '${s.id}')"
-                          title="提醒负责人：${ownerName} (${ownerAcct})"
-                          class="inline-flex flex-col items-center gap-0.5 px-2.5 py-1 rounded-lg border text-xs transition hover:shadow-xs ${m.badgeCls}">
-                          <span>${m.done ? "✓ 已完成" : m.statusText}</span>
-                          <span class="text-[10px] font-mono opacity-80">${m.dueDate.slice(5)}</span>
-                        </button>
-                      `;
-                    };
+                          const renderMilestoneCell = visitId => {
+                            const m = msMap[visitId];
+                            if (!m) return "";
+                            return `
+                              <button onclick="App.selectVisit('${visitId}', '${s.id}')"
+                                title="提醒负责人：${ownerName} (${ownerAcct})"
+                                class="inline-flex flex-col items-center gap-0.5 px-2.5 py-1 rounded-lg border text-xs transition hover:shadow-xs ${m.badgeCls}">
+                                <span>${m.done ? "✓ 已完成" : m.statusText}</span>
+                                <span class="text-[10px] font-mono opacity-80">${m.dueDate.slice(5)}</span>
+                              </button>
+                            `;
+                          };
 
-                    const renderSimpleDot = (visitId, done, specialSap = false) => {
-                      let cls = "bg-slate-100 text-slate-500 border-slate-200";
-                      let label = "待填";
-                      if (specialSap) {
-                        if (s.sapConfirmed) {
-                          cls = "bg-rose-600 text-white border-rose-600";
-                          label = "确诊SAP";
-                        } else {
-                          cls = "bg-slate-100 text-slate-400 border-slate-200";
-                          label = "未触发";
-                        }
-                      } else if (done) {
-                        cls = "bg-emerald-50 text-emerald-700 border-emerald-200 font-semibold";
-                        label = "✓ 已完成";
-                      }
-                      return `
-                        <button onclick="App.selectVisit('${visitId}', '${s.id}')"
-                          class="px-2.5 py-1 rounded-lg border text-xs ${cls} hover:opacity-90 transition">
-                          ${label}
-                        </button>
-                      `;
-                    };
+                          const renderSimpleDot = (visitId, done, specialSap = false) => {
+                            let cls = "bg-slate-100 text-slate-500 border-slate-200";
+                            let label = "待填";
+                            if (specialSap) {
+                              if (s.sapConfirmed) {
+                                cls = "bg-rose-600 text-white border-rose-600";
+                                label = "确诊SAP";
+                              } else {
+                                cls = "bg-slate-100 text-slate-400 border-slate-200";
+                                label = "未触发";
+                              }
+                            } else if (done) {
+                              cls = "bg-emerald-50 text-emerald-700 border-emerald-200 font-semibold";
+                              label = "✓ 已完成";
+                            }
+                            return `
+                              <button onclick="App.selectVisit('${visitId}', '${s.id}')"
+                                class="px-2.5 py-1 rounded-lg border text-xs ${cls} hover:opacity-90 transition">
+                                ${label}
+                              </button>
+                            `;
+                          };
 
-                    return `
-                      <tr class="hover:bg-sky-50/40 transition">
-                        <td class="py-3.5 px-4 font-bold text-sky-800 font-mono">${s.id}</td>
-                        <td class="py-3.5 px-3">
-                          <div class="font-semibold text-slate-800 font-mono">${s.initials}</div>
-                          <div class="text-xs text-slate-400">${s.name || "未填姓名"}</div>
-                        </td>
-                        <td class="py-3.5 px-3">
-                          <div class="font-semibold text-slate-800 text-xs">👤 ${ownerName}</div>
-                          <div class="text-[11px] font-mono text-sky-700">${ownerAcct}</div>
-                        </td>
-                        <td class="py-3.5 px-3 text-slate-600">${s.v1?.demographics?.gender || "-"} / ${s.v1?.demographics?.age || "-"}岁</td>
-                        <td class="py-3.5 px-3 text-xs font-mono text-slate-700 font-semibold">${s.startDate || "-"}</td>
-                        <td class="py-3.5 px-3 text-center">${renderSimpleDot("V1", !!s.v1?.consentDate)}</td>
-                        <td class="py-3.5 px-3 text-center bg-sky-50/20">${renderMilestoneCell("V2_1")}</td>
-                        <td class="py-3.5 px-3 text-center bg-sky-50/20">${renderMilestoneCell("V2_2")}</td>
-                        <td class="py-3.5 px-3 text-center">${renderSimpleDot("V2_3", s.sapConfirmed, true)}</td>
-                        <td class="py-3.5 px-3 text-center">${renderSimpleDot("V3", !!s.v3?.outcome?.status)}</td>
-                        <td class="py-3.5 px-3 text-center bg-sky-50/20">${renderMilestoneCell("V4")}</td>
-                        <td class="py-3.5 px-3 text-center bg-sky-50/20">${renderMilestoneCell("V5")}</td>
-                        <td class="py-3.5 px-3 text-center">
-                          <span class="px-2.5 py-1 rounded-full text-xs font-medium ${
-                            s.locked
-                              ? "bg-slate-800 text-white"
-                              : s.summary?.piSignature
-                              ? "bg-emerald-100 text-emerald-800"
-                              : "bg-slate-100 text-slate-600"
-                          }">
-                            ${s.locked ? "🔒 已锁定" : s.summary?.piSignature ? "已签审" : "录入中"}
-                          </span>
-                        </td>
-                        <td class="py-3.5 px-4 text-right space-x-1 whitespace-nowrap">
-                          <button onclick="App.selectVisit('V1', '${s.id}')"
-                            class="text-xs font-semibold text-sky-600 hover:text-sky-800 px-2.5 py-1 rounded border border-sky-200 bg-sky-50">
-                            填报 →
-                          </button>
-                          <button onclick="App.state.currentSubjectId='${s.id}';App.state.docxPreviewModalOpen=true;App.render()"
-                            title="预览并导出该患者的《病例报告表.docx》"
-                            class="text-xs font-semibold text-slate-700 hover:text-slate-900 px-2 py-1 rounded border border-slate-300 bg-white">
-                            📄 Word
-                          </button>
-                        </td>
-                      </tr>
-                    `;
-                  })
-                  .join("")}
+                          return `
+                            <tr class="hover:bg-sky-50/40 transition">
+                              <td class="py-3.5 px-4 font-bold text-sky-800 font-mono">${s.id}</td>
+                              <td class="py-3.5 px-3">
+                                <div class="font-semibold text-slate-800 font-mono">${s.initials}</div>
+                                <div class="text-xs text-slate-400">${s.name || "未填姓名"}</div>
+                              </td>
+                              <td class="py-3.5 px-3">
+                                <div class="font-semibold text-slate-800 text-xs">👤 ${ownerName}</div>
+                                <div class="text-[11px] font-mono text-sky-700">${ownerAcct}</div>
+                              </td>
+                              <td class="py-3.5 px-3 text-slate-600">${s.v1?.demographics?.gender || "-"} / ${s.v1?.demographics?.age || "-"}岁</td>
+                              <td class="py-3.5 px-3 text-xs font-mono text-slate-700 font-semibold">${s.startDate || "-"}</td>
+                              <td class="py-3.5 px-3 text-center">${renderSimpleDot("V1", !!s.v1?.consentDate)}</td>
+                              <td class="py-3.5 px-3 text-center bg-sky-50/20">${renderMilestoneCell("V2_1")}</td>
+                              <td class="py-3.5 px-3 text-center bg-sky-50/20">${renderMilestoneCell("V2_2")}</td>
+                              <td class="py-3.5 px-3 text-center">${renderSimpleDot("V2_3", s.sapConfirmed, true)}</td>
+                              <td class="py-3.5 px-3 text-center">${renderSimpleDot("V3", !!s.v3?.outcome?.status)}</td>
+                              <td class="py-3.5 px-3 text-center bg-sky-50/20">${renderMilestoneCell("V4")}</td>
+                              <td class="py-3.5 px-3 text-center bg-sky-50/20">${renderMilestoneCell("V5")}</td>
+                              <td class="py-3.5 px-3 text-center">
+                                <span class="px-2.5 py-1 rounded-full text-xs font-medium ${
+                                  s.locked
+                                    ? "bg-slate-800 text-white"
+                                    : s.summary?.piSignature
+                                    ? "bg-emerald-100 text-emerald-800"
+                                    : "bg-slate-100 text-slate-600"
+                                }">
+                                  ${s.locked ? "🔒 已锁定" : s.summary?.piSignature ? "已签审" : "录入中"}
+                                </span>
+                              </td>
+                              <td class="py-3.5 px-4 text-right space-x-1 whitespace-nowrap">
+                                <button onclick="App.selectVisit('V1', '${s.id}')"
+                                  class="text-xs font-semibold text-sky-600 hover:text-sky-800 px-2.5 py-1 rounded border border-sky-200 bg-sky-50">
+                                  填报 →
+                                </button>
+                                <button onclick="App.state.currentSubjectId='${s.id}';App.state.docxPreviewModalOpen=true;App.render()"
+                                  title="预览并导出该患者的《病例报告表.docx》"
+                                  class="text-xs font-semibold text-slate-700 hover:text-slate-900 px-2 py-1 rounded border border-slate-300 bg-white">
+                                  📄 Word
+                                </button>
+                                <button onclick="App.deleteSubject('${s.id}')"
+                                  title="删除该受试者记录"
+                                  class="text-xs font-semibold text-rose-600 hover:text-rose-800 px-2 py-1 rounded border border-rose-200 bg-rose-50/60">
+                                  删除
+                                </button>
+                              </td>
+                            </tr>
+                          `;
+                        })
+                        .join("")
+                }
               </tbody>
             </table>
           </div>
@@ -1269,7 +1365,27 @@ window.App = {
 
   // 2. 核心 eCRF 编辑器视图（宽屏下左右两栏独立滚动条；窄屏下单栏可折叠导航并自动跳转至内容区）
   renderCRFEditorView(subj) {
-    if (!subj) return `<div class="p-8 text-center text-slate-500">暂无受试者，请点击右上角“新增受试者”</div>`;
+    if (!subj) {
+      return `
+        <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-10 text-center max-w-2xl mx-auto my-8 space-y-4">
+          <div class="w-16 h-16 rounded-2xl bg-sky-50 text-sky-600 flex items-center justify-center text-3xl mx-auto">📋</div>
+          <h2 class="text-lg font-bold text-slate-800">当前系统暂无受试者数据</h2>
+          <p class="text-xs sm:text-sm text-slate-500 leading-relaxed">
+            所有历史测试/示范数据已清空。您可以点击下方按钮手动新增首位入组受试者，或使用 AI 本地整理病历后通过 JSON / CSV 一键批量导入。
+          </p>
+          <div class="flex flex-wrap items-center justify-center gap-3 pt-2">
+            <button onclick="App.state.newSubjectModalOpen=true;App.render()"
+              class="px-5 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs sm:text-sm font-bold shadow transition cursor-pointer">
+              ＋ 新增入组受试者
+            </button>
+            <button onclick="App.state.importModalOpen=true;App.render()"
+              class="px-5 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white text-xs sm:text-sm font-bold shadow transition cursor-pointer">
+              📥 导入 CSV / JSON 与下载 AI 模版
+            </button>
+          </div>
+        </div>
+      `;
+    }
     const visits = window.CRF_CONFIG.visits;
     const curVisit = visits.find(v => v.id === this.state.currentVisitId) || visits[0];
     const subjMilestones = this.getSubjectMilestones(subj);

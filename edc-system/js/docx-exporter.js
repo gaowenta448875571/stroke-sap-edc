@@ -280,37 +280,48 @@ window.DOCX_EXPORTER = (function () {
 
     ov["T3_R6_C1_P0"] = fmtLineDateTime(hx.admissionTime);
 
-    // 主诉
+    // 主诉与现病史
+    const mainSymArr = Array.isArray(hx.mainSymptoms) ? hx.mainSymptoms : [];
+    const accSymArr = Array.isArray(hx.accompany) ? hx.accompany : [];
+    const allHxSyms = [...mainSymArr, ...accSymArr];
+
     ov["T3_R7_C1_P1"] = orig => {
       let s = checkOpt(orig, hx.chiefConsciousness);
-      if (Array.isArray(hx.chiefConsciousness) && hx.chiefConsciousness.length > 0) {
+      if ((Array.isArray(hx.chiefConsciousness) && hx.chiefConsciousness.length > 0) || mainSymArr.includes("意识障碍")) {
         s = s.replace("□意识障碍", "☑意识障碍");
       }
       return s;
     };
     ov["T3_R7_C1_P2"] = orig => {
       let s = checkOpt(orig, hx.chiefSpeech);
-      if (Array.isArray(hx.chiefSpeech) && hx.chiefSpeech.length > 0) {
+      if ((Array.isArray(hx.chiefSpeech) && hx.chiefSpeech.length > 0) || mainSymArr.includes("言语障碍")) {
         s = s.replace("□言语障碍", "☑言语障碍");
       }
       return s;
     };
     ov["T3_R7_C1_P3"] = orig => {
       let s = orig;
-      if (hasVal(hx.chiefLimbSide) || (Array.isArray(hx.chiefLimbType) && hx.chiefLimbType.length > 0)) {
+      const limbSide = hx.limbWeaknessSide || hx.chiefLimbSide || "";
+      if (hasVal(limbSide) || mainSymArr.includes("肢体无力/瘫痪") || mainSymArr.includes("肢体麻木/感觉减退") || (Array.isArray(hx.chiefLimbType) && hx.chiefLimbType.length > 0)) {
         s = s.replace("□肢体症状", "☑肢体症状");
-        s = checkOpt(s, hx.chiefLimbSide);
+        if (hasVal(limbSide)) s = checkOpt(s, String(limbSide).split(/[、,，/\s]+/));
         s = checkOpt(s, hx.chiefLimbType);
+        if (mainSymArr.includes("肢体无力/瘫痪")) {
+          s = checkOpt(s, ["无力", "瘫痪"]);
+        }
+        if (mainSymArr.includes("肢体麻木/感觉减退")) {
+          s = checkOpt(s, ["麻木"]);
+        }
       }
       return s;
     };
     ov["T3_R7_C1_P4"] = orig => {
-      let s = checkOpt(orig, hx.chiefOther);
-      if (Array.isArray(hx.chiefOther) && hx.chiefOther.length > 0) {
+      let s = checkOpt(orig, [...(Array.isArray(hx.chiefOther) ? hx.chiefOther : []), ...allHxSyms]);
+      if ((Array.isArray(hx.chiefOther) && hx.chiefOther.length > 0) || allHxSyms.some(x => ["头晕/眩晕", "剧烈头痛", "饮水呛咳", "吞咽困难", "口眼歪斜", "口角流涎", "呕吐", "抽搐"].includes(x))) {
         s = s.replace(/^□其他：/, "☑其他：");
       }
-      if (hasVal(hx.chiefOther_other)) {
-        s = s.replace("□其他：________", `☑其他：${hx.chiefOther_other}`);
+      if (hasVal(hx.chiefOther_other || hx.mainSymptoms_other)) {
+        s = s.replace("□其他：________", `☑其他：${hx.chiefOther_other || hx.mainSymptoms_other}`);
       }
       return s;
     };
@@ -329,10 +340,38 @@ window.DOCX_EXPORTER = (function () {
       if (hasVal(hx.onsetState_other)) s = s.replace("□其他：____", `☑其他：${hx.onsetState_other}`);
       return s;
     };
-    ov["T3_R8_C1_P2"] = orig => checkOpt(orig, hx.mainSymptoms);
-    ov["T3_R8_C1_P3"] = orig => checkOpt(orig, hx.mainSymptoms);
+    ov["T3_R8_C1_P2"] = orig => {
+      let s = checkOpt(orig, allHxSyms);
+      if (mainSymArr.includes("肢体无力/瘫痪") && (hasVal(hx.limbWeaknessSide) || hasVal(hx.limbWeaknessNote))) {
+        const limbInfo = [hx.limbWeaknessSide, hx.limbWeaknessNote].filter(Boolean).join("，");
+        s = s.replace("☑肢体无力/瘫痪", `☑肢体无力/瘫痪(${limbInfo})`);
+      }
+      return s;
+    };
+    ov["T3_R8_C1_P3"] = orig => {
+      let s = checkOpt(orig, allHxSyms);
+      const extraMain = mainSymArr.filter(x => ["饮水呛咳", "吞咽困难", "口眼歪斜", "口角流涎", "肢体麻木/感觉减退", "视野缺损/视物重影", "共济失调/步态不稳"].includes(x));
+      if (extraMain.length > 0 || hasVal(hx.mainSymptoms_other)) {
+        const extraTxt = [...extraMain, hx.mainSymptoms_other].filter(Boolean).join("、");
+        if (s.includes("□其他")) {
+          s = s.replace(/□其他[：:_\s]*/, `☑其他：${extraTxt} `);
+        } else {
+          s += `  ☑补充表现：${extraTxt}`;
+        }
+      }
+      return s;
+    };
     ov["T3_R8_C1_P4"] = orig => checkOpt(orig, hx.progression);
-    ov["T3_R8_C1_P5"] = orig => checkOpt(orig, hx.accompany);
+    ov["T3_R8_C1_P5"] = orig => {
+      let s = checkOpt(orig, allHxSyms);
+      if (accSymArr.includes("咳嗽咳痰")) {
+        s = checkOpt(s, ["咳嗽/咳痰", "咳痰", "咳嗽"]);
+      }
+      if (hasVal(hx.accompany_other)) {
+        s = s.replace(/□其他[：:_\s]*/, `☑其他：${hx.accompany_other} `);
+      }
+      return s;
+    };
     ov["T3_R8_C1_P6"] = orig => {
       let s = checkOpt(orig, hx.preHospitalTx);
       s = checkOpt(s, hx.preHospitalEffect);
