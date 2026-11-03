@@ -660,25 +660,33 @@ window.App = {
     const prevScaleBody = document.getElementById("edc-scale-modal-body");
     const prevReminderBody = document.getElementById("edc-reminder-modal-body");
     const prevDocxBody = document.getElementById("edc-docx-modal-body");
+    const prevAdminBody = document.getElementById("edc-admin-modal-body");
+    const prevImportBody = document.getElementById("edc-import-modal-body");
 
     const savedLeftScroll = prevLeftPane ? prevLeftPane.scrollTop : 0;
     const savedRightScroll = prevRightPane ? prevRightPane.scrollTop : 0;
     const savedScaleScroll = prevScaleBody ? prevScaleBody.scrollTop : 0;
     const savedReminderScroll = prevReminderBody ? prevReminderBody.scrollTop : 0;
     const savedDocxScroll = prevDocxBody ? prevDocxBody.scrollTop : 0;
+    const savedAdminScroll = prevAdminBody ? prevAdminBody.scrollTop : 0;
+    const savedImportScroll = prevImportBody ? prevImportBody.scrollTop : 0;
     const savedWinScrollY = typeof window.scrollY === "number" ? window.scrollY : 0;
 
     const subj = this.getCurrentSubject();
 
     root.innerHTML = `
-      ${this.renderTopNavbar(subj)}
-      <main class="max-w-[1800px] mx-auto px-3 sm:px-5 ${this.state.mainTab === "editor" ? "py-3" : "py-5"}">
-        ${
-          this.state.mainTab === "dashboard"
-            ? this.renderDashboardView()
-            : this.renderCRFEditorView(subj)
-        }
-      </main>
+      <div class="${this.state.mainTab === "editor" ? "lg:h-screen lg:flex lg:flex-col lg:overflow-hidden" : "min-h-screen"}">
+        ${this.renderTopNavbar(subj)}
+        <main class="w-full max-w-[1800px] mx-auto px-3 sm:px-5 ${
+          this.state.mainTab === "editor" ? "py-3 lg:flex-1 lg:min-h-0 lg:overflow-hidden" : "py-5"
+        }">
+          ${
+            this.state.mainTab === "dashboard"
+              ? this.renderDashboardView()
+              : this.renderCRFEditorView(subj)
+          }
+        </main>
+      </div>
       ${this.state.scaleModal.open ? this.renderScaleModal() : ""}
       ${this.state.auditModalOpen ? this.renderAuditModal(subj) : ""}
       ${this.state.newSubjectModalOpen ? this.renderNewSubjectModal() : ""}
@@ -694,6 +702,8 @@ window.App = {
     const nextScaleBody = document.getElementById("edc-scale-modal-body");
     const nextReminderBody = document.getElementById("edc-reminder-modal-body");
     const nextDocxBody = document.getElementById("edc-docx-modal-body");
+    const nextAdminBody = document.getElementById("edc-admin-modal-body");
+    const nextImportBody = document.getElementById("edc-import-modal-body");
 
     // 左栏始终保持在原位
     if (nextLeftPane) {
@@ -714,15 +724,17 @@ window.App = {
       if (nextRightPane) {
         nextRightPane.scrollTop = savedRightScroll;
       }
-      if (typeof window.scrollTo === "function" && (! typeof window.innerWidth === "number" || window.innerWidth < 1024 || this.state.mainTab === "dashboard")) {
+      if (typeof window.scrollTo === "function" && (typeof window.innerWidth !== "number" || window.innerWidth < 1024 || this.state.mainTab === "dashboard")) {
         window.scrollTo(0, savedWinScrollY);
       }
     }
 
-    // 恢复展开的量表评分弹窗、提醒弹窗、Word预览弹窗内部滚动条位置（解决量表打分跳回顶部问题）
+    // 恢复展开的各弹窗内部滚动条位置
     if (nextScaleBody) nextScaleBody.scrollTop = savedScaleScroll;
     if (nextReminderBody) nextReminderBody.scrollTop = savedReminderScroll;
     if (nextDocxBody) nextDocxBody.scrollTop = savedDocxScroll;
+    if (nextAdminBody) nextAdminBody.scrollTop = savedAdminScroll;
+    if (nextImportBody) nextImportBody.scrollTop = savedImportScroll;
   },
 
   // 账号登录视图（简洁专业的临床科研登录页）
@@ -784,7 +796,7 @@ window.App = {
     `;
   },
 
-  // 顶部全局导航栏（专门优化手机端、平板端与宽屏响应式排版，宽屏下完整展示项目标题不遮挡）
+  // 顶部全局导航栏（全屏与非全屏保持统一紧凑布局，工具与账号统一收纳在“工具/账号”菜单中，不撑高顶栏）
   renderTopNavbar(subj) {
     const proj = window.CRF_CONFIG.project;
     const allReminders = this.getAllReminders();
@@ -795,17 +807,17 @@ window.App = {
     const canManageUsers = this.canCurrentUserManageUsers();
 
     return `
-      <header class="bg-slate-900 text-white shadow-md sticky top-0 z-30 no-print">
-        <!-- 第一层主栏 -->
-        <div class="w-full max-w-[1920px] mx-auto px-3 sm:px-5 py-2 min-h-[56px] flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
-          <!-- 左侧 Logo 与完整项目标题（不截断遮挡） -->
+      <header class="bg-slate-900 text-white shadow-md sticky top-0 z-30 shrink-0 no-print">
+        <!-- 第一层主栏（全屏与常规桌面端完全一致） -->
+        <div class="w-full max-w-[1800px] mx-auto px-3 sm:px-5 h-14 flex items-center justify-between gap-3">
+          <!-- 左侧 Logo 与完整项目标题 -->
           <div class="flex items-center gap-2.5 min-w-0 flex-1">
             <div class="w-11 h-8 sm:h-9 px-1.5 rounded-lg bg-gradient-to-br from-sky-500 to-teal-500 flex items-center justify-center font-extrabold text-xs tracking-tight shadow-inner shrink-0 select-none">
               eCRF
             </div>
             <div class="min-w-0 flex-1">
-              <h1 class="font-bold text-xs sm:text-sm xl:text-base 2xl:text-[17px] tracking-tight leading-snug break-words">${proj.title}</h1>
-              <p class="hidden sm:block text-[11px] text-slate-400">
+              <h1 class="font-bold text-xs sm:text-sm lg:text-[15px] tracking-tight leading-snug truncate">${proj.title}</h1>
+              <p class="hidden sm:block text-[11px] text-slate-400 leading-tight mt-0.5 truncate">
                 临床科研电子数据采集系统 · 当前登录：<span class="text-sky-300 font-semibold">${curUser.name} (${curUser.account})</span> ${
                   isPI ? "[PI权限]" : canExport ? "[已授权导出]" : "[数据录入员]"
                 }
@@ -816,106 +828,47 @@ window.App = {
           <!-- 桌面端中部：主视图切换页签 (lg 及以上显示在顶栏中间) -->
           <div class="hidden lg:flex items-center gap-1 bg-slate-800 p-1 rounded-lg border border-slate-700 shrink-0">
             <button onclick="App.state.mainTab='dashboard';App.render()"
-              class="px-2.5 py-1.5 rounded-md text-xs font-medium transition ${
+              class="px-3 py-1.5 rounded-md text-xs font-medium transition ${
                 this.state.mainTab === "dashboard" ? "bg-sky-600 text-white shadow" : "text-slate-300 hover:text-white"
               }">
               📊 队列总览与访视矩阵
             </button>
             <button onclick="App.state.mainTab='editor';App.render()"
-              class="px-2.5 py-1.5 rounded-md text-xs font-medium transition ${
+              class="px-3 py-1.5 rounded-md text-xs font-medium transition ${
                 this.state.mainTab === "editor" ? "bg-sky-600 text-white shadow" : "text-slate-300 hover:text-white"
               }">
               📝 病例报告表 (eCRF) 填报
             </button>
           </div>
 
-          <!-- 右侧操作区（自适应手机与桌面） -->
-          <div class="flex items-center gap-1.5 shrink-0">
-            <!-- 桌面端当前登录身份牌 + 后端权限管理 + 退出登录 -->
-            <div class="hidden xl:flex items-center gap-1.5 bg-slate-800 border border-slate-700 rounded-lg px-2 py-1 text-xs">
-              <span class="text-emerald-400">●</span>
-              <span class="font-semibold text-white">${curUser.name}</span>
-              <span class="px-1.5 py-0.2 rounded text-[10px] font-bold ${
-                isPI ? "bg-emerald-500/20 text-emerald-300 border border-emerald-400/30" : "bg-slate-700 text-slate-300"
-              }">${isPI ? "PI" : "研究者"}</span>
-              ${
-                canManageUsers
-                  ? `
-                <button onclick="App.state.userAdminModalOpen=true;App.render()"
-                  title="后端账号开通与权限配置"
-                  class="ml-0.5 px-2 py-0.5 rounded bg-indigo-600/80 hover:bg-indigo-500 text-white text-[11px] font-semibold transition">
-                  🔑 权限管理
-                </button>
-              `
-                  : ""
-              }
-              <button onclick="App.handleLogout()"
-                title="退出当前账号并返回登录页"
-                class="ml-0.5 px-2 py-0.5 rounded bg-rose-600/80 hover:bg-rose-500 text-white text-[11px] font-semibold transition">
-                退出
-              </button>
-            </div>
-
-            <!-- 采集节点提醒按钮（手机端显示紧凑图标+数字，桌面显示完整文字） -->
+          <!-- 右侧操作区（全屏与非全屏一致：采集提醒 + 工具/账号折叠按钮） -->
+          <div class="flex items-center gap-2 shrink-0">
+            <!-- 采集节点提醒按钮 -->
             <button onclick="App.state.reminderModalOpen=true;App.render()"
-              class="px-2 py-1.5 rounded-lg ${
+              class="px-2.5 py-1.5 rounded-lg ${
                 urgentCount > 0
                   ? "bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-400/40"
                   : "bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-600"
-              } text-xs font-semibold flex items-center gap-1 transition">
+              } text-xs font-semibold flex items-center gap-1 transition cursor-pointer">
               <span>🔔</span>
               <span class="hidden sm:inline">采集提醒</span>
               <span class="px-1.5 py-0.2 rounded-full ${urgentCount > 0 ? "bg-rose-600 text-white" : "bg-slate-700 text-slate-300"} text-[11px] font-bold">${urgentCount}</span>
             </button>
 
-            <!-- 新增受试者 -->
-            <button onclick="App.state.newSubjectModalOpen=true;App.render()"
-              class="px-2 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center gap-1 shadow-xs transition">
-              <span>＋</span>
-              <span class="hidden sm:inline">新增受试者</span>
-            </button>
-
-            <!-- 桌面端：导入、导出(仅授权/PI)、打印/导出病例报告表.docx -->
-            <button onclick="App.state.importModalOpen=true;App.render()"
-              class="hidden xl:inline-flex items-center gap-1 px-2 py-1.5 rounded-lg bg-teal-700 hover:bg-teal-600 text-white border border-teal-500 text-xs font-semibold transition">
-              📥 导入/AI模版
-            </button>
-
-            <button onclick="App.handleExportCSV()"
-              title="${canExport ? "已开通导出权限，点击导出宽表CSV" : "需后端开通导出权限或使用PI账号"}"
-              class="hidden 2xl:inline-flex items-center gap-1 px-2 py-1.5 rounded-lg border text-xs font-medium transition ${
-                canExport
-                  ? "bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-600"
-                  : "bg-slate-800/50 text-slate-400 border-slate-700"
-              }">
-              ${canExport ? "⬇ 导出CSV" : "🔒 导出CSV"}
-            </button>
-
-            <button onclick="App.handleExportJSON()"
-              title="${canExport ? "已开通导出权限，点击导出全量JSON" : "需后端开通导出权限或使用PI账号"}"
-              class="hidden 2xl:inline-flex items-center gap-1 px-2 py-1.5 rounded-lg border text-xs font-medium transition ${
-                canExport
-                  ? "bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-600"
-                  : "bg-slate-800/50 text-slate-400 border-slate-700"
-              }">
-              ${canExport ? "⬇ 导出JSON" : "🔒 导出JSON"}
-            </button>
-
-            <button onclick="App.state.docxPreviewModalOpen=true;App.render()"
-              class="hidden xl:inline-flex items-center gap-1 px-2 py-1.5 rounded-lg bg-sky-700 hover:bg-sky-600 text-white border border-sky-500 text-xs font-semibold transition">
-              🖨 打印/导出Word
-            </button>
-
-            <!-- 窄屏/平板端 (< 2xl) 更多工具与账号菜单按钮 -->
+            <!-- 工具与账号折叠菜单按钮（所有屏幕宽度下统一折叠） -->
             <button onclick="App.state.mobileToolbarOpen=!App.state.mobileToolbarOpen;App.render()"
-              class="2xl:hidden px-2 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-600 text-xs font-semibold text-slate-200 flex items-center gap-1">
+              class="px-2.5 py-1.5 rounded-lg ${
+                this.state.mobileToolbarOpen
+                  ? "bg-sky-600 text-white border border-sky-400"
+                  : "bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-200"
+              } text-xs font-semibold flex items-center gap-1 transition cursor-pointer">
               <span>${this.state.mobileToolbarOpen ? "✕" : "☰"}</span>
-              <span class="hidden sm:inline">工具/账号</span>
+              <span>工具/账号</span>
             </button>
           </div>
         </div>
 
-        <!-- 手机/平板端 (< lg) 第二层：主视图切换双栏 + 打印快捷按钮 -->
+        <!-- 手机/平板端 (< lg) 第二层：主视图切换双栏 -->
         <div class="lg:hidden px-3 pb-2 flex items-center justify-between gap-2 border-t border-slate-800 pt-2">
           <div class="grid grid-cols-2 gap-1 bg-slate-800 p-1 rounded-lg border border-slate-700 flex-1">
             <button onclick="App.state.mainTab='dashboard';App.render()"
@@ -931,64 +884,58 @@ window.App = {
               📝 eCRF 填报
             </button>
           </div>
-          <button onclick="App.state.docxPreviewModalOpen=true;App.render()"
-            class="px-2.5 py-2 rounded-lg bg-sky-700 text-white text-xs font-semibold shrink-0">
-            🖨 Word/打印
-          </button>
         </div>
 
-        <!-- 窄屏/平板端展开式工具抽屉 (包含当前登录账号、权限管理、退出登录、AI导入/模版、PI导出CSV/JSON、打印Word) -->
+        <!-- 展开式工具/账号抽屉 (全屏与非全屏通用：包含当前登录账号、权限管理、退出登录、AI导入/模版、导出CSV/JSON) -->
         ${
           this.state.mobileToolbarOpen
             ? `
-          <div class="2xl:hidden bg-slate-800/95 border-t border-slate-700 px-3 sm:px-5 py-3 space-y-3 text-xs">
-            <div class="flex flex-wrap items-center justify-between gap-2">
-              <div class="flex flex-wrap items-center gap-2">
-                <span class="text-slate-300 font-semibold">👤 当前登录：</span>
-                <span class="px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-600 text-sky-300 font-bold">
-                  ${curUser.name} (${curUser.account}) · ${curUser.role}
-                </span>
-                ${
-                  canManageUsers
-                    ? `
-                  <button onclick="App.state.userAdminModalOpen=true;App.state.mobileToolbarOpen=false;App.render()"
-                    class="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold">
-                    🔑 后端账号与权限开通
+          <div class="bg-slate-800/95 border-t border-slate-700 px-3 sm:px-5 py-3 text-xs">
+            <div class="w-full max-w-[1800px] mx-auto space-y-3">
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <div class="flex flex-wrap items-center gap-2">
+                  <span class="text-slate-300 font-semibold">👤 当前登录：</span>
+                  <span class="px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-600 text-sky-300 font-bold">
+                    ${curUser.name} (${curUser.account}) · ${curUser.role}
+                  </span>
+                  ${
+                    canManageUsers
+                      ? `
+                    <button onclick="App.state.userAdminModalOpen=true;App.state.mobileToolbarOpen=false;App.render()"
+                      class="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold cursor-pointer">
+                      🔑 后端账号与权限开通
+                    </button>
+                  `
+                      : ""
+                  }
+                  <button onclick="App.handleLogout()"
+                    class="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-semibold cursor-pointer">
+                    🚪 退出登录
                   </button>
-                `
-                    : ""
-                }
-                <button onclick="App.handleLogout()"
-                  class="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-semibold">
-                  🚪 退出登录
+                </div>
+                <span class="text-[11px] ${canExport ? "text-emerald-400" : "text-amber-300"}">
+                  ${canExport ? "✓ 已具备数据导出权限" : "ℹ️ 导出 CSV/JSON 需由后端开通权限"}
+                </span>
+              </div>
+
+              <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <button onclick="App.state.importModalOpen=true;App.state.mobileToolbarOpen=false;App.render()"
+                  class="py-2 px-3 rounded-lg bg-teal-700 hover:bg-teal-600 text-white font-semibold text-center cursor-pointer">
+                  📥 导入数据 / 下载 AI 模版
+                </button>
+                <button onclick="App.handleExportCSV()"
+                  class="py-2 px-3 rounded-lg border font-semibold text-center cursor-pointer ${
+                    canExport ? "bg-slate-700 hover:bg-slate-600 text-white border-slate-500" : "bg-slate-900/50 text-slate-400 border-slate-700"
+                  }">
+                  ${canExport ? "⬇ 导出宽表 CSV" : "🔒 导出CSV (仅授权)"}
+                </button>
+                <button onclick="App.handleExportJSON()"
+                  class="py-2 px-3 rounded-lg border font-semibold text-center cursor-pointer ${
+                    canExport ? "bg-slate-700 hover:bg-slate-600 text-white border-slate-500" : "bg-slate-900/50 text-slate-400 border-slate-700"
+                  }">
+                  ${canExport ? "⬇ 导出全量 JSON" : "🔒 导出JSON (仅授权)"}
                 </button>
               </div>
-              <span class="text-[11px] ${canExport ? "text-emerald-400" : "text-amber-300"}">
-                ${canExport ? "✓ 已具备数据导出权限" : "ℹ️ 导出 CSV/JSON 需由后端开通权限"}
-              </span>
-            </div>
-
-            <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
-              <button onclick="App.state.importModalOpen=true;App.state.mobileToolbarOpen=false;App.render()"
-                class="py-2 px-3 rounded-lg bg-teal-700 hover:bg-teal-600 text-white font-semibold text-center">
-                📥 导入数据 / 下载模版
-              </button>
-              <button onclick="App.state.docxPreviewModalOpen=true;App.state.mobileToolbarOpen=false;App.render()"
-                class="py-2 px-3 rounded-lg bg-sky-700 hover:bg-sky-600 text-white font-semibold text-center">
-                📄 导出/打印病例报告表.docx
-              </button>
-              <button onclick="App.handleExportCSV()"
-                class="py-2 px-3 rounded-lg border font-semibold text-center ${
-                  canExport ? "bg-slate-700 text-white border-slate-500" : "bg-slate-900/50 text-slate-400 border-slate-700"
-                }">
-                ${canExport ? "⬇ 导出宽表 CSV" : "🔒 导出CSV (仅授权)"}
-              </button>
-              <button onclick="App.handleExportJSON()"
-                class="py-2 px-3 rounded-lg border font-semibold text-center ${
-                  canExport ? "bg-slate-700 text-white border-slate-500" : "bg-slate-900/50 text-slate-400 border-slate-700"
-                }">
-                ${canExport ? "⬇ 导出全量 JSON" : "🔒 导出JSON (仅授权)"}
-              </button>
             </div>
           </div>
         `
@@ -1275,7 +1222,7 @@ window.App = {
                             填报 →
                           </button>
                           <button onclick="App.state.currentSubjectId='${s.id}';App.state.docxPreviewModalOpen=true;App.render()"
-                            title="导出或打印该患者的《病例报告表.docx》"
+                            title="预览并导出该患者的《病例报告表.docx》"
                             class="text-xs font-semibold text-slate-700 hover:text-slate-900 px-2 py-1 rounded border border-slate-300 bg-white">
                             📄 Word
                           </button>
@@ -1475,20 +1422,6 @@ window.App = {
           </div>
           ${this.renderCRFPageFooter(subj)}
         </section>
-
-        <!-- 窄屏(<1024px)折叠时左下角常驻悬浮展开按钮：滚动到表单深处也能一键呼出访视目录 -->
-        ${
-          !this.state.mobileNavOpen
-            ? `
-          <button type="button"
-            onclick="App.state.mobileNavOpen=true;App.render();var lp=document.getElementById('edc-left-pane');if(lp&&lp.scrollIntoView){lp.scrollIntoView({behavior:'smooth',block:'start'});}"
-            class="lg:hidden fixed bottom-5 left-4 z-40 px-4 py-2.5 rounded-full bg-gradient-to-r from-sky-600 to-indigo-600 text-white font-bold text-xs shadow-2xl border-2 border-white flex items-center gap-2 no-print cursor-pointer">
-            <span class="px-1.5 py-0.5 rounded-full bg-amber-400 text-slate-950 font-extrabold text-[11px]">目录</span>
-            <span>📂 展开切换访视 (${curVisit.code})</span>
-          </button>
-        `
-            : ""
-        }
       </div>
     `;
   },
@@ -1512,21 +1445,11 @@ window.App = {
           </div>
 
           <div class="flex flex-wrap items-center gap-1.5 sm:gap-2 no-print">
-            <!-- 窄屏下表单表头内嵌的醒目切换访视按钮 -->
-            <button type="button"
-              onclick="App.state.mobileNavOpen=!App.state.mobileNavOpen;App.render();var lp=document.getElementById('edc-left-pane');if(lp&&lp.scrollIntoView){lp.scrollIntoView({behavior:'smooth',block:'start'});}"
-              class="lg:hidden px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-extrabold shadow-xs flex items-center gap-1 cursor-pointer">
-              <span>📂 ${this.state.mobileNavOpen ? "收起访视目录" : "展开切换访视目录"}</span>
-            </button>
             <span class="px-2.5 py-1 rounded-lg bg-sky-50 border border-sky-200 text-xs text-slate-700">
               👤 负责人：<strong class="text-slate-900">${ownerName}</strong> <span class="font-mono text-sky-700">(${ownerAcct})</span>
             </span>
-            <button onclick="App.state.docxPreviewModalOpen=true;App.render()"
-              class="px-2.5 py-1 rounded-lg border border-sky-300 bg-sky-600 hover:bg-sky-500 text-xs font-semibold text-white flex items-center gap-1">
-              📄 导出/打印病例报告表.docx
-            </button>
             <button onclick="App.state.auditModalOpen=true;App.render()"
-              class="px-2.5 py-1 rounded-lg border border-slate-300 bg-slate-50 hover:bg-slate-100 text-xs font-medium text-slate-700 flex items-center gap-1">
+              class="px-2.5 py-1 rounded-lg border border-slate-300 bg-slate-50 hover:bg-slate-100 text-xs font-medium text-slate-700 flex items-center gap-1 cursor-pointer">
               🕒 稽查 (<span id="edc-audit-btn-count">${(subj.auditLogs || []).length}</span>)
             </button>
             <span class="px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1 ${
@@ -1827,7 +1750,7 @@ window.App = {
             <button onclick="App.state.importModalOpen=false;App.render()" class="text-slate-400 hover:text-white text-2xl">×</button>
           </div>
 
-          <div class="p-5 overflow-y-auto space-y-5 flex-1 text-xs">
+          <div id="edc-import-modal-body" class="p-5 overflow-y-auto space-y-5 flex-1 text-xs">
             <!-- 第一步：下载模版与复制 AI 提示词 -->
             <div class="bg-teal-50/70 border border-teal-200 rounded-xl p-4 space-y-3">
               <div class="flex flex-wrap items-center justify-between gap-2">
@@ -1883,9 +1806,8 @@ window.App = {
             </div>
           </div>
 
-          <div class="px-5 py-3 bg-slate-100 border-t border-slate-200 flex items-center justify-between text-xs">
-            <span class="text-slate-500">提示：若导入的患者编号已存在则自动更新该患者数据；若为新编号则自动新增并绑定您的账号 (${curUser.account})。</span>
-            <button onclick="App.state.importModalOpen=false;App.render()" class="px-4 py-1.5 rounded-lg border border-slate-300 bg-white font-semibold">关闭</button>
+          <div class="px-5 py-3 bg-slate-100 border-t border-slate-200 text-xs text-slate-500">
+            提示：若导入的患者编号已存在则自动更新该患者数据；若为新编号则自动新增并绑定您的账号 (${curUser.account})。
           </div>
         </div>
       </div>
@@ -1928,30 +1850,27 @@ window.App = {
     }
   },
 
-  // ==================== 选中病人的《病例报告表.docx》预览、下载与直接打印弹窗 ====================
+  // ==================== 选中病人的《病例报告表.docx》预览与下载弹窗 ====================
   renderDocxPreviewModal(subj) {
     if (!subj) return "";
     return `
       <div class="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4">
         <div class="bg-slate-100 rounded-2xl shadow-2xl border border-slate-300 max-w-5xl w-full max-h-[92vh] flex flex-col overflow-hidden">
-          <!-- 顶部控制栏（打印时自动隐藏） -->
-          <div class="px-4 sm:px-6 py-4 bg-slate-900 text-white flex flex-wrap items-center justify-between gap-3 no-print">
-            <div>
-              <h3 class="text-sm sm:text-lg font-bold">📄 患者 [${subj.id}] ${subj.name || subj.initials} — 填好后的《病例报告表.docx》导出与打印</h3>
+          <!-- 顶部控制栏 -->
+          <div class="px-4 sm:px-6 py-4 bg-slate-900 text-white flex items-center justify-between gap-3 no-print">
+            <div class="min-w-0">
+              <h3 class="text-sm sm:text-lg font-bold">📄 患者 [${subj.id}] ${subj.name || subj.initials} — 《病例报告表.docx》导出预览</h3>
               <p class="text-xs text-slate-400 mt-0.5">格式严格对应原《病例报告表.docx》，已将该受试者当前填报的所有勾选项 (☑/□)、检验值、量表分及签名完整填入表内</p>
             </div>
-            <div class="flex flex-wrap items-center gap-2">
-              <button onclick="window.DOCX_EXPORTER.downloadFilledDocx(App.getCurrentSubject());App.showToast('已生成并下载填好数据的《病例报告表_' + App.getCurrentSubject().id + '.docx》！')"
-                class="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow flex items-center gap-1.5 transition">
+            <div class="flex items-center gap-3 shrink-0">
+              <button type="button" onclick="window.DOCX_EXPORTER.downloadFilledDocx(App.getCurrentSubject());App.showToast('已生成并下载填好数据的《病例报告表_' + App.getCurrentSubject().id + '.docx》！')"
+                class="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow flex items-center gap-1.5 transition cursor-pointer">
                 📥 下载填好的《病例报告表.docx》
               </button>
-              <button onclick="App.printSelectedSubjectDocx()"
-                class="px-3.5 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold shadow flex items-center gap-1.5 transition">
-                🖨 直接打印整本病例报告表
-              </button>
-              <button onclick="App.state.docxPreviewModalOpen=false;App.render()"
-                class="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold">
-                关闭 ×
+              <button type="button" onclick="App.state.docxPreviewModalOpen=false;App.render()"
+                title="关闭窗口"
+                class="text-slate-400 hover:text-white text-2xl leading-none px-1 cursor-pointer">
+                ×
               </button>
             </div>
           </div>
@@ -1963,58 +1882,6 @@ window.App = {
         </div>
       </div>
     `;
-  },
-
-  // 打开独立打印窗口直接打印选中患者的整本《病例报告表.docx》
-  printSelectedSubjectDocx() {
-    const subj = this.getCurrentSubject();
-    if (!subj) return;
-    const htmlContent = window.DOCX_EXPORTER.renderFullPrintHTML(subj);
-    const printWin = window.open("", "_blank", "width=1000,height=800");
-    if (!printWin) {
-      window.print();
-      return;
-    }
-    printWin.document.write(`
-      <!DOCTYPE html>
-      <html lang="zh-CN">
-      <head>
-        <meta charset="UTF-8" />
-        <title>病例报告表_${subj.id}_${subj.initials}_${subj.name || ""}</title>
-        <style>
-          body {
-            font-family: "Songti SC", "SimSun", "STSong", "Microsoft YaHei", serif;
-            color: #000;
-            background: #fff;
-            margin: 15mm;
-            font-size: 10.5pt;
-            line-height: 1.5;
-          }
-          h1 { font-size: 16pt; margin: 0 0 6px 0; text-align: center; }
-          h2 { font-size: 13pt; margin: 0 0 8px 0; text-align: center; }
-          h3 { font-size: 11.5pt; margin: 14px 0 6px 0; padding: 4px 8px; background: #f3f4f6; border-left: 4px solid #000; }
-          p { margin: 4px 0 12px 0; text-align: center; font-size: 9.5pt; }
-          table { width: 100%; border-collapse: collapse; margin-bottom: 10px; page-break-inside: auto; }
-          tr { page-break-inside: avoid; page-break-after: auto; }
-          th, td { border: 1px solid #000; padding: 5px 8px; text-align: left; vertical-align: middle; font-size: 9.5pt; }
-          th { background-color: #efefef; font-weight: bold; }
-          .font-bold { font-weight: bold; }
-          .w-56 { width: 28%; background: #fafafa; }
-        </style>
-      </head>
-      <body>
-        ${htmlContent}
-        <script>
-          window.onload = function() {
-            setTimeout(function() {
-              window.print();
-            }, 250);
-          };
-        </script>
-      </body>
-      </html>
-    `);
-    printWin.document.close();
   },
 
   // ==================== 后端连接设置、账号开通与权限配置弹窗 ====================
@@ -2135,13 +2002,14 @@ window.App = {
               </h3>
               <p class="text-xs text-slate-400 mt-0.5">支持通过后端 API 或命令行开通账号，精细化分配 PI 解锁、数据导出 (CSV/JSON) 与账号管理权限</p>
             </div>
-            <button onclick="App.state.userAdminModalOpen=false;App.render()"
-              class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold">
-              关闭 ×
+            <button type="button" onclick="App.state.userAdminModalOpen=false;App.render()"
+              title="关闭窗口"
+              class="text-slate-400 hover:text-white text-2xl leading-none px-1 cursor-pointer">
+              ×
             </button>
           </div>
 
-          <div class="p-4 sm:p-6 overflow-y-auto space-y-5 flex-1 text-xs">
+          <div id="edc-admin-modal-body" class="p-4 sm:p-6 overflow-y-auto space-y-5 flex-1 text-xs">
             <!-- 1. 后端 API 连接配置 -->
             <div class="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3">
               <div class="font-bold text-slate-800 flex items-center justify-between">

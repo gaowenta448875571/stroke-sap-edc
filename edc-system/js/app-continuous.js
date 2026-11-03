@@ -690,6 +690,7 @@ Object.assign(window.App, {
                           <div class="flex items-center gap-1.5 text-xs">
                             <span class="text-slate-500">实测值:</span>
                             <input type="text" value="${String(curMeasured).replace(/"/g, "&quot;")}" placeholder="填实测值"
+                              oninput="App.state.scaleModal.tempMeasured['${item.id}']=this.value"
                               onchange="App.state.scaleModal.tempMeasured['${item.id}']=this.value"
                               class="crf-input w-24 py-1 px-2 text-xs font-mono text-center bg-white" />
                             <span class="text-slate-400">${item.unit || ""}</span>
@@ -758,6 +759,7 @@ Object.assign(window.App, {
               <div>
                 <label class="text-xs font-bold text-slate-700 block mb-1">量表评估者签名</label>
                 <input type="text" value="${tempSigner}"
+                  oninput="App.state.scaleModal.tempSigner=this.value"
                   onchange="App.state.scaleModal.tempSigner=this.value"
                   class="crf-input font-semibold" />
               </div>
@@ -840,7 +842,11 @@ Object.assign(window.App, {
 
   // ==================== 新增受试者弹窗（自动绑定首次录入账号与负责人姓名） ====================
   renderNewSubjectModal() {
-    const nextId = String(this.state.subjects.length + 1).padStart(3, "0");
+    const maxNumId = (this.state.subjects || []).reduce((max, s) => {
+      const n = parseInt(s.id, 10);
+      return !isNaN(n) && n > max ? n : max;
+    }, 0);
+    const nextId = String(maxNumId + 1).padStart(3, "0");
     const curUser = this.state.currentUser || { account: "dr_wangqiang", name: "王强", role: "主治医师" };
     return `
       <div class="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">

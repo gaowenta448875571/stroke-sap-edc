@@ -27,17 +27,17 @@ body {
   background: #94a3b8;
 }
 
-/* 宽屏左右分栏独立滚动容器 */
+/* 宽屏左右分栏独立滚动容器（配合外层 flex-col h-screen 自适应顶栏高度，确保左右两栏始终可平滑到底） */
 @media (min-width: 1024px) {
   .edc-split-layout {
-    height: calc(100vh - 4.25rem);
+    height: 100%;
     overflow: hidden;
   }
   .edc-pane-scroll {
     height: 100%;
     overflow-y: auto;
     overscroll-behavior: contain;
-    padding-bottom: 2.5rem;
+    padding-bottom: 3rem;
   }
 }
 
