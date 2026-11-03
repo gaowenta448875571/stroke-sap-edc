@@ -1,9 +1,10 @@
 // 前后端分离数据接口适配器 (Storage, JWT Auth, Backend Permission & REST API Adapter)
 
-const STORAGE_KEY = "STROKE_SAP_EDC_SUBJECTS_V4";
-const API_CONFIG_KEY = "STROKE_SAP_EDC_API_CONFIG";
-const SESSION_KEY = "STROKE_SAP_EDC_AUTH_SESSION_V1";
-const USERS_STORAGE_KEY = "STROKE_SAP_EDC_USERS_V1";
+const STORAGE_KEY = "STROKE_SAP_EDC_SUBJECTS_V5";
+const API_CONFIG_KEY = "STROKE_SAP_EDC_API_CONFIG_V3";
+const SESSION_KEY = "STROKE_SAP_EDC_AUTH_SESSION_V3";
+const USERS_STORAGE_KEY = "STROKE_SAP_EDC_USERS_V3";
+const REMEMBER_CREDS_KEY = "STROKE_SAP_EDC_REMEMBER_CREDS_V1";
 
 window.EDC_API = {
   getConfig() {
@@ -14,9 +15,11 @@ window.EDC_API = {
     const isHttpOrigin =
       typeof window !== "undefined" &&
       window.location &&
-      (window.location.protocol === "http:" || window.location.protocol === "https:");
+      (window.location.protocol === "http:" || window.location.protocol === "https:") &&
+      window.location.hostname !== "localhost" &&
+      window.location.hostname !== "127.0.0.1";
     return {
-      mode: "local", // 'local' | 'remote'
+      mode: "remote", // 默认连接云端 Supabase + Render 后端
       baseUrl: isHttpOrigin
         ? `${window.location.origin}/api/v1`
         : "https://stroke-sap-edc-system.onrender.com/api/v1",
@@ -28,11 +31,10 @@ window.EDC_API = {
     localStorage.setItem(API_CONFIG_KEY, JSON.stringify(cfg));
   },
 
-  // 若部署在 Render 等同源后端环境或本地启动了 8000 端口后端，启动时自动探测 /api/v1/health 并切换为 remote 模式
+  // 启动时自动探测可用后端并同步为 remote 模式，确保前端实时读取 Supabase 最新修改
   async autoDetectBackendIfNeeded() {
     try {
-      const saved = localStorage.getItem(API_CONFIG_KEY);
-      if (saved) return; // 用户已手动保存过配置则尊重用户选择
+      const currentCfg = this.getConfig();
       const candidates = [];
       if (
         typeof window !== "undefined" &&
@@ -41,8 +43,8 @@ window.EDC_API = {
       ) {
         candidates.push(`${window.location.origin}/api/v1`);
       }
-      candidates.push("http://127.0.0.1:8000/api/v1");
       candidates.push("https://stroke-sap-edc-system.onrender.com/api/v1");
+      candidates.push("http://127.0.0.1:8000/api/v1");
 
       for (const candidateUrl of candidates) {
         try {
@@ -50,28 +52,78 @@ window.EDC_API = {
           if (res.ok) {
             const data = await res.json();
             if (data && data.status === "ok") {
-              this.saveConfig({ mode: "remote", baseUrl: candidateUrl, token: "" });
+              this.saveConfig({ mode: "remote", baseUrl: candidateUrl, token: currentCfg.token || "" });
               return;
             }
           }
         } catch (err) {}
       }
     } catch (e) {
-      // 本地静态打开且后端未启动，静默保持 local 模式
+      // 网络离线时静默回退
     }
   },
 
-  // ==================== 账号登录、退出与会话管理 ====================
+  // ==================== 记住密码、自动登录与会话管理 ====================
+  getRememberedCreds() {
+    try {
+      const raw = localStorage.getItem(REMEMBER_CREDS_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && parsed.rememberPassword) {
+          return {
+            account: parsed.account || "",
+            password: parsed.password || "",
+            rememberPassword: true,
+            autoLogin: Boolean(parsed.autoLogin)
+          };
+        }
+      }
+    } catch (e) {}
+    return { account: "", password: "", rememberPassword: false, autoLogin: false };
+  },
+
+  saveRememberedCreds({ account, password, rememberPassword, autoLogin }) {
+    if (rememberPassword || autoLogin) {
+      localStorage.setItem(
+        REMEMBER_CREDS_KEY,
+        JSON.stringify({
+          account: account || "",
+          password: password || "",
+          rememberPassword: true,
+          autoLogin: Boolean(autoLogin)
+        })
+      );
+    } else {
+      localStorage.removeItem(REMEMBER_CREDS_KEY);
+    }
+  },
+
   getSession() {
     try {
-      const raw = localStorage.getItem(SESSION_KEY);
-      if (raw) return JSON.parse(raw);
+      // 优先读取当前标签页会话（避免刷新页面丢失当前填报状态）
+      const tabRaw = typeof sessionStorage !== "undefined" ? sessionStorage.getItem(SESSION_KEY) : null;
+      if (tabRaw) return JSON.parse(tabRaw);
+      // 仅当用户勾选了“下次自动登录”时才从 localStorage 恢复持久会话
+      const creds = this.getRememberedCreds();
+      if (creds.autoLogin) {
+        const raw = localStorage.getItem(SESSION_KEY);
+        if (raw) return JSON.parse(raw);
+      }
     } catch (e) {}
     return null;
   },
 
-  saveSession(session) {
-    localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+  saveSession(session, autoLogin = false) {
+    try {
+      if (typeof sessionStorage !== "undefined") {
+        sessionStorage.setItem(SESSION_KEY, JSON.stringify(session));
+      }
+    } catch (e) {}
+    if (autoLogin) {
+      localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+    } else {
+      localStorage.removeItem(SESSION_KEY);
+    }
     if (session && session.token) {
       const cfg = this.getConfig();
       cfg.token = session.token;
@@ -80,7 +132,17 @@ window.EDC_API = {
   },
 
   clearSession() {
+    try {
+      if (typeof sessionStorage !== "undefined") {
+        sessionStorage.removeItem(SESSION_KEY);
+      }
+    } catch (e) {}
     localStorage.removeItem(SESSION_KEY);
+    // 用户主动退出登录时，关闭自动登录标记（若勾选了记住密码则保留账号密码）
+    const creds = this.getRememberedCreds();
+    if (creds.rememberPassword) {
+      this.saveRememberedCreds({ ...creds, autoLogin: false });
+    }
     const cfg = this.getConfig();
     cfg.token = "";
     this.saveConfig(cfg);
@@ -117,9 +179,18 @@ window.EDC_API = {
         });
         if (res.ok) {
           const data = await res.json();
-          if (Array.isArray(data.users)) {
-            this.saveLocalUsers(data.users);
-            return data.users;
+          if (Array.isArray(data.users) && data.users.length > 0) {
+            // 保留本地已知明文密码映射以便离线兜底，但账号列表完全以 Supabase 数据库为准
+            const localMap = {};
+            (window.EDC_USERS || []).forEach(u => {
+              if (u.password) localMap[u.account] = u.password;
+            });
+            const merged = data.users.map(u => ({
+              ...u,
+              password: u.password || localMap[u.account] || ""
+            }));
+            this.saveLocalUsers(merged);
+            return merged;
           }
         }
       } catch (e) {
@@ -129,48 +200,69 @@ window.EDC_API = {
     return this.getLocalUsers();
   },
 
-  // 账号密码登录（支持远程后端 JWT 鉴权与本地演示鉴权）
-  async login(account, password) {
+  // 账号密码登录（优先通过远程 Supabase 后端鉴权）
+  async login(account, password, options = {}) {
     const cleanAcc = String(account || "").trim();
     const cleanPwd = String(password || "").trim();
+    const rememberPassword = Boolean(options.rememberPassword || options.autoLogin);
+    const autoLogin = Boolean(options.autoLogin);
+
     if (!cleanAcc || !cleanPwd) {
       throw new Error("请输入登录账号和密码");
     }
 
     const cfg = this.getConfig();
     if (cfg.mode === "remote") {
-      const res = await fetch(`${cfg.baseUrl}/auth/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ account: cleanAcc, password: cleanPwd })
-      });
-      const payload = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(payload.detail || payload.message || "后端登录鉴权失败，请检查账号或密码");
+      try {
+        const res = await fetch(`${cfg.baseUrl}/auth/login`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ account: cleanAcc, password: cleanPwd })
+        });
+        const payload = await res.json().catch(() => ({}));
+        if (res.ok && payload.user) {
+          const session = {
+            token: payload.token,
+            user: payload.user,
+            loginTime: new Date().toLocaleString("zh-CN"),
+            authSource: "remote"
+          };
+          this.saveRememberedCreds({ account: cleanAcc, password: cleanPwd, rememberPassword, autoLogin });
+          this.saveSession(session, autoLogin);
+          await this.fetchUsers();
+          return session;
+        }
+        // 若云端尚未完成最新部署但账号已在最新用户列表中匹配，继续走下方校验；若账号确实不存在则直接报错
+        const latestUsers = await this.fetchUsers();
+        const inLatest = latestUsers.find(u => u.account === cleanAcc);
+        if (!inLatest) {
+          throw new Error(payload.detail || `账号 "${cleanAcc}" 不存在或已在 Supabase 中修改，请使用最新账号登录`);
+        }
+        if (inLatest.status === "disabled") {
+          throw new Error(payload.detail || `账号 "${cleanAcc}" 已被停用`);
+        }
+        if (!inLatest.password || inLatest.password !== cleanPwd) {
+          throw new Error(payload.detail || "登录密码错误");
+        }
+      } catch (err) {
+        if (err.message && (err.message.includes("账号") || err.message.includes("密码") || err.message.includes("停用"))) {
+          throw err;
+        }
       }
-      const session = {
-        token: payload.token,
-        user: payload.user,
-        loginTime: new Date().toLocaleString("zh-CN"),
-        authSource: "remote"
-      };
-      this.saveSession(session);
-      await this.fetchUsers();
-      return session;
     }
 
-    // 本地模式鉴权（读取权限表）
-    const users = this.getLocalUsers();
+    // 本地/兜底鉴权（严格基于从后端同步的最新账号列表）
+    const users = await this.fetchUsers();
     const found = users.find(u => u.account === cleanAcc);
     if (!found) {
-      throw new Error(`账号 "${cleanAcc}" 不存在，请联系管理员/PI在后端开通账号`);
+      throw new Error(`账号 "${cleanAcc}" 不存在，请核对 Supabase users 表中的账号名`);
     }
     if (found.status === "disabled") {
-      throw new Error(`账号 "${cleanAcc}" 已被后端停用，请联系管理员/PI开通`);
+      throw new Error(`账号 "${cleanAcc}" 已被后端停用`);
     }
     const expectedPwd = found.password || "123456";
     if (cleanPwd !== expectedPwd) {
-      throw new Error("登录密码不正确（演示账号默认密码为 123456）");
+      throw new Error("登录密码不正确");
     }
     const safeUser = { ...found };
     delete safeUser.password;
@@ -180,7 +272,8 @@ window.EDC_API = {
       loginTime: new Date().toLocaleString("zh-CN"),
       authSource: "local"
     };
-    this.saveSession(session);
+    this.saveRememberedCreds({ account: cleanAcc, password: cleanPwd, rememberPassword, autoLogin });
+    this.saveSession(session, autoLogin);
     return session;
   },
 
@@ -489,10 +582,9 @@ window.EDC_API = {
     });
   },
 
-  // 导出为标准科研分析 CSV (宽表格式，直接兼容 SPSS / R / Stata / Excel，同时包含量表逐项细则列)
+  // 标准科研 CSV 宽表表头（不含患者编号与首次录入负责人信息，导入时由系统按顺位自动生成编号并匹配当前登录账号）
   CSV_HEADERS: [
-    "患者编号(SUBJID)", "中心号(SITEID)", "患者姓名(NAME)", "姓名缩写(INITIALS)",
-    "首次录入负责人账号(OWNER_ACCT)", "负责人姓名(OWNER_NAME)",
+    "中心号(SITEID)", "患者姓名(NAME)", "姓名缩写(INITIALS)",
     "入组日期(STARTDTC)", "研究状态(STATUS)", "性别(SEX)", "出生日期(BRTHDTC)", "年龄(AGE)", "身高cm(HEIGHT)", "体重kg(WEIGHT)", "BMI",
     "住院号(HOSPID)", "手机号1(PHONE1)", "入院来源", "发病时间", "静脉溶栓", "血管内治疗", "TOAST分型", "中医证候", "是否符合纳排入组",
     "V1_体温", "V1_呼吸", "V1_脉搏", "V1_收缩压", "V1_舒张压",
@@ -509,12 +601,9 @@ window.EDC_API = {
 
   subjectToCSVRow(s) {
     return [
-      s.id,
       s.centerId || "01",
       s.name || "",
       s.initials || "",
-      s.ownerAccount || "dr_lihua",
-      s.ownerName || s.investigator || "李华",
       s.startDate || "",
       s.status || "进行中",
       s.v1?.demographics?.gender || "",
@@ -618,7 +707,7 @@ window.EDC_API = {
   exportToJSON(subjects) {
     const payload = {
       project: "重症卒中相关性肺炎多组学预测标志物筛选及针刺多靶点调控机制研究",
-      version: "1.0 (2026-04-20)",
+      version: "1.0",
       exportedAt: new Date().toISOString(),
       subjectCount: subjects.length,
       subjects
@@ -632,10 +721,16 @@ window.EDC_API = {
     URL.revokeObjectURL(url);
   },
 
-  // 下载供 AI 整理或本地填报的 JSON 标准模版（包含所有量表逐项评分细则 details 结构）
+  // 下载供 AI 整理或本地填报的 JSON 标准模版（不含患者编号与负责人信息，导入时自动生成与匹配）
   downloadJSONTemplate(currentUser) {
-    const u = currentUser || { account: "dr_wangqiang", name: "王强", role: "主治医师" };
-    const sample = window.createEmptySubject("005", window.getTodayDateStr(), u);
+    const u = currentUser || { account: "dr_gaowentao", name: "高文涛", role: "24专硕研究生" };
+    const sample = window.createEmptySubject("", window.getTodayDateStr(), u);
+    delete sample.id;
+    delete sample.ownerAccount;
+    delete sample.ownerName;
+    delete sample.investigator;
+    delete sample.auditLogs;
+
     sample.name = "陈志远";
     sample.initials = "CZY";
     sample.v1.demographics.hospitalId = "ZY20261102005";
@@ -653,17 +748,17 @@ window.EDC_API = {
     };
     // 完整填充 V2-1、V2-2、V3、V4、V5 的量表细则结构示范，确保 AI 可直接按此结构输出逐项细则
     sample.v2_1.scales = {
-      GCS: { score: 13, signer: u.name, isAcupuncturist: "否", details: { eye: 3, verbal: 4, motor: 6 } },
+      GCS: { score: 13, signer: "", isAcupuncturist: "否", details: { eye: 3, verbal: 4, motor: 6 } },
       NIHSS: {
         score: 14,
-        signer: u.name,
+        signer: "",
         isAcupuncturist: "否",
         details: { "1a": 1, "1b": 1, "1c": 0, "2": 1, "3": 1, "4": 1, "5a": 0, "5b": 3, "6a": 0, "6b": 2, "7": 0, "8": 1, "9": 2, "10": 1, "11": 0 }
       },
-      FOIS: { score: 3, signer: u.name, isAcupuncturist: "否", details: { level: 3 } },
+      FOIS: { score: 3, signer: "", isAcupuncturist: "否", details: { level: 3 } },
       SOFA: {
         score: 2,
-        signer: u.name,
+        signer: "",
         isAcupuncturist: "否",
         details: { resp: 1, coag: 0, liver: 0, cardio: 0, cns: 1, renal: 0 },
         measured: { resp: "330", coag: "190", liver: "15.0", cardio: "84", cns: "13", renal: "85" }
@@ -671,17 +766,17 @@ window.EDC_API = {
       EQ5D: { score: "3-3-3-2-1 / VAS:55", vas: 55, details: { mobility: 3, selfcare: 3, activity: 3, pain: 2, anxiety: 1 } }
     };
     sample.v2_2.scales = {
-      GCS: { score: 14, signer: u.name, isAcupuncturist: "否", details: { eye: 4, verbal: 4, motor: 6 } },
+      GCS: { score: 14, signer: "", isAcupuncturist: "否", details: { eye: 4, verbal: 4, motor: 6 } },
       NIHSS: {
         score: 11,
-        signer: u.name,
+        signer: "",
         isAcupuncturist: "否",
         details: { "1a": 0, "1b": 1, "1c": 0, "2": 0, "3": 1, "4": 1, "5a": 0, "5b": 2, "6a": 0, "6b": 2, "7": 0, "8": 1, "9": 2, "10": 1, "11": 0 }
       },
-      FOIS: { score: 4, signer: u.name, isAcupuncturist: "否", details: { level: 4 } },
+      FOIS: { score: 4, signer: "", isAcupuncturist: "否", details: { level: 4 } },
       SOFA: {
         score: 1,
-        signer: u.name,
+        signer: "",
         isAcupuncturist: "否",
         details: { resp: 0, coag: 0, liver: 0, cardio: 0, cns: 1, renal: 0 },
         measured: { resp: "405", coag: "205", liver: "14.2", cardio: "82", cns: "14", renal: "82" }
@@ -689,30 +784,30 @@ window.EDC_API = {
       EQ5D: { score: "2-3-2-2-1 / VAS:65", vas: 65, details: { mobility: 2, selfcare: 3, activity: 2, pain: 2, anxiety: 1 } }
     };
     sample.v3.scales = {
-      GCS: { score: 15, signer: u.name, isAcupuncturist: "否", details: { eye: 4, verbal: 5, motor: 6 } },
+      GCS: { score: 15, signer: "", isAcupuncturist: "否", details: { eye: 4, verbal: 5, motor: 6 } },
       NIHSS: {
         score: 8,
-        signer: u.name,
+        signer: "",
         isAcupuncturist: "否",
         details: { "1a": 0, "1b": 0, "1c": 0, "2": 0, "3": 0, "4": 1, "5a": 0, "5b": 2, "6a": 0, "6b": 2, "7": 0, "8": 1, "9": 1, "10": 1, "11": 0 }
       },
-      FOIS: { score: 5, signer: u.name, isAcupuncturist: "否", details: { level: 5 } },
+      FOIS: { score: 5, signer: "", isAcupuncturist: "否", details: { level: 5 } },
       EQ5D: { score: "2-2-2-2-1 / VAS:72", vas: 72, details: { mobility: 2, selfcare: 2, activity: 2, pain: 2, anxiety: 1 } },
-      MRS: { score: 3, signer: u.name, isAcupuncturist: "否", details: { grade: 3 } }
+      MRS: { score: 3, signer: "", isAcupuncturist: "否", details: { grade: 3 } }
     };
     sample.v4.scales = {
-      FOIS: { score: 6, signer: u.name, isAcupuncturist: "否", details: { level: 6 } },
+      FOIS: { score: 6, signer: "", isAcupuncturist: "否", details: { level: 6 } },
       EQ5D: { score: "2-2-2-1-1 / VAS:78", vas: 78, details: { mobility: 2, selfcare: 2, activity: 2, pain: 1, anxiety: 1 } },
-      MRS: { score: 3, signer: u.name, isAcupuncturist: "否", details: { grade: 3 } }
+      MRS: { score: 3, signer: "", isAcupuncturist: "否", details: { grade: 3 } }
     };
     sample.v5.scales = {
-      FOIS: { score: 7, signer: u.name, isAcupuncturist: "否", details: { level: 7 } },
+      FOIS: { score: 7, signer: "", isAcupuncturist: "否", details: { level: 7 } },
       EQ5D: { score: "1-2-2-1-1 / VAS:85", vas: 85, details: { mobility: 1, selfcare: 2, activity: 2, pain: 1, anxiety: 1 } },
-      MRS: { score: 2, signer: u.name, isAcupuncturist: "否", details: { grade: 2 } }
+      MRS: { score: 2, signer: "", isAcupuncturist: "否", details: { grade: 2 } }
     };
 
     const templateObj = {
-      _instructions: "【AI与本地数据整理标准JSON模版】可将单例或多例受试者对象放入 subjects 数组中。导入时不仅导入量表总分(score)，还会将 scales.<量表名>.details 中的逐项评分细则直接回填至“展开量表细则算分”弹窗中并自动核算总分。缺失值请填 NA / ND / UNK。",
+      _instructions: "【AI与本地数据整理标准JSON模版】可将单例或多例受试者对象放入 subjects 数组中。无需填写患者编号与首次录入负责人信息（导入时系统将按当前患者顺位自动生成三位数字编号，并自动绑定当前登录账号与姓名）。量表不仅导入总分(score)，还会将 scales.<量表名>.details 中的逐项评分细则直接回填至“展开量表细则算分”弹窗中。缺失值请填 NA / ND / UNK。",
       _scaleDetailsReference: {
         GCS: "details: { eye: 1~4, verbal: 1~5, motor: 1~6 }",
         NIHSS: "details: { '1a':0~3, '1b':0~2, '1c':0~2, '2':0~2, '3':0~3, '4':0~3, '5a':0~4或9, '5b':0~4或9, '6a':0~4或9, '6b':0~4或9, '7':0~2或9, '8':0~2, '9':0~3, '10':0~2或9, '11':0~2 }",
@@ -722,7 +817,6 @@ window.EDC_API = {
         MRS: "details: { grade: 0~6 }"
       },
       project: "重症卒中相关性肺炎多组学预测标志物筛选及针刺多靶点调控机制研究",
-      version: "1.0",
       subjects: [sample]
     };
 
@@ -737,8 +831,8 @@ window.EDC_API = {
 
   // 下载供 AI 整理或 Excel 本地填报的 CSV 标准宽表模版
   downloadCSVTemplate(currentUser) {
-    const u = currentUser || { account: "dr_wangqiang", name: "王强", role: "主治医师" };
-    const sample = window.createEmptySubject("005", window.getTodayDateStr(), u);
+    const u = currentUser || { account: "dr_gaowentao", name: "高文涛", role: "24专硕研究生" };
+    const sample = window.createEmptySubject("", window.getTodayDateStr(), u);
     sample.name = "陈志远";
     sample.initials = "CZY";
     sample.v1.demographics.hospitalId = "ZY20261102005";
@@ -768,21 +862,19 @@ window.EDC_API = {
   },
 
   // 生成供数据录入员复制到 AI（DeepSeek/ChatGPT/Kimi/Claude）的病历结构化提取提示词
-  getAIPromptText(currentUser) {
-    const u = currentUser || { account: "dr_wangqiang", name: "王强" };
+  getAIPromptText() {
     return `你是一名严谨的神经重症临床科研数据提取助手。请根据我提供的患者病历/出院小结/检验报告/量表评估记录，结合我上传的《重症卒中CRF_AI数据整理导入标准模版.json》（或CSV模版），将患者信息提取为完全符合该模版字段结构的 JSON 数据（直接输出纯 JSON 代码块，包含顶层 "subjects": [ ... ]）。
 提取规则：
-1. 患者编号(id)为三位数字字符串（如 "005"），姓名缩写(initials)按规则生成三位大写字母（三字填首字母；两字加填第二字第二字母；四字填前三字首字母）。
-2. 首次录入负责人账号(ownerAccount)默认填 "${u.account}"，负责人姓名(ownerName)默认填 "${u.name}"。
-3. 实验室检查项（如 v1.labs.wbc、neut、lymph、crp、pct、plt、ddimer、inr、aptt、fib、alb、palb、hb、glu、scr、tbil、pao2_fio2、il2、il4、il6、ifn_gamma、il10、tnf_alpha）格式均为 {"val": "数值", "eval": "0或1或2或9", "note": "备注"}，其中 eval: "0"=正常, "1"=异常但无临床意义, "2"=异常且有临床意义, "9"=未查(ND)。
-4. 【重要：临床量表不仅要填总分 score，还必须尽可能根据病历查体记录提取填充 details 逐项评分细则，以便系统“展开量表细则算分”直接展示每一项】：
+1. 姓名缩写(initials)按规则生成三位大写字母（三字填首字母；两字加填第二字第二字母；四字填前三字首字母）。无需填写患者编号或录入负责人信息，系统导入时会自动按顺位生成编号并匹配当前登录账号。
+2. 实验室检查项（如 v1.labs.wbc、neut、lymph、crp、pct、plt、ddimer、inr、aptt、fib、alb、palb、hb、glu、scr、tbil、pao2_fio2、il2、il4、il6、ifn_gamma、il10、tnf_alpha）格式均为 {"val": "数值", "eval": "0或1或2或9", "note": "备注"}，其中 eval: "0"=正常, "1"=异常但无临床意义, "2"=异常且有临床意义, "9"=未查(ND)。
+3. 【重要：临床量表不仅要填总分 score，还必须尽可能根据病历查体记录提取填充 details 逐项评分细则，以便系统“展开量表细则算分”直接展示每一项】：
    - GCS.details: {"eye": 1~4, "verbal": 1~5, "motor": 1~6}
    - NIHSS.details (15项): {"1a":0~3, "1b":0~2, "1c":0~2, "2":0~2, "3":0~3, "4":0~3, "5a":0~4, "5b":0~4, "6a":0~4, "6b":0~4, "7":0~2, "8":0~2, "9":0~3, "10":0~2, "11":0~2}
    - SOFA.details (6项): {"resp":0~4, "coag":0~4, "liver":0~4, "cardio":0~4, "cns":0~4, "renal":0~4} 及 measured 实测值 {"resp":"氧合指数", "coag":"PLT", "liver":"TBIL", "cardio":"MAP", "cns":"GCS", "renal":"Cr"}
    - FOIS.details: {"level": 1~7}
    - EQ5D.details: {"mobility":1~3, "selfcare":1~3, "activity":1~3, "pain":1~3, "anxiety":1~3} 以及 vas (0~100)
    - MRS.details: {"grade": 0~6}
-5. 若某项选择“其他”，请将具体说明填入对应的 _other 字段（如 ethnicityOther、occupationOther、toastOther、tcmSyndromeOther 等）。未查项目填 "ND"，不适用填 "NA"，不详填 "UNK"。`;
+4. 若某项选择“其他”，请将具体说明填入对应的 _other 字段（如 ethnicityOther、occupationOther、toastOther、tcmSyndromeOther 等）。未查项目填 "ND"，不适用填 "NA"，不详填 "UNK"。`;
   },
 
   // 深度合并工具（保证导入的残缺 JSON 仍拥有完整的默认属性树）
@@ -846,11 +938,16 @@ window.EDC_API = {
     return rows;
   },
 
-  // 将导入的 JSON 或 CSV 内容解析并合并至现有受试者队列
+  // 将导入的 JSON 或 CSV 内容解析并合并至现有受试者队列（自动按当前队列顺位生成 3 位患者编号，并自动绑定当前登录账号与姓名）
   importDataText(rawText, formatHint, existingSubjects, currentUser) {
-    const u = currentUser || { account: "dr_wangqiang", name: "王强", role: "主治医师" };
+    const u = currentUser || { account: "dr_gaowentao", name: "高文涛", role: "24专硕研究生" };
     const trimmed = (rawText || "").trim();
     if (!trimmed) throw new Error("导入内容为空，请选择文件或粘贴数据内容");
+
+    const maxExistingNum = (existingSubjects || []).reduce((max, s) => {
+      const n = parseInt(s.id, 10);
+      return !isNaN(n) && n > max ? n : max;
+    }, (existingSubjects || []).length);
 
     const isJson = formatHint === "json" || trimmed.startsWith("{") || trimmed.startsWith("[");
     const importedList = [];
@@ -867,20 +964,23 @@ window.EDC_API = {
 
       rawArr.forEach((item, idx) => {
         if (!item || typeof item !== "object") return;
-        const id = String(item.id || item.SUBJID || String(existingSubjects.length + idx + 1).padStart(3, "0")).padStart(3, "0");
+        const autoId = String(maxExistingNum + idx + 1).padStart(3, "0");
+        const id = item.id && String(item.id).trim() ? String(item.id).trim().padStart(3, "0") : autoId;
         const startDate = item.startDate || item.v1?.eligibility?.enrollDate || window.getTodayDateStr();
         const base = window.createEmptySubject(id, startDate, u);
         this.deepMergeSubject(base, item);
         base.id = id;
-        if (!base.ownerAccount) base.ownerAccount = u.account;
-        if (!base.ownerName) base.ownerName = u.name;
+        // 强制根据当前系统登录的账号自动匹配首次录入负责人账号与姓名
+        base.ownerAccount = u.account;
+        base.ownerName = u.name;
+        base.investigator = u.name;
         this.reconcileSubjectScales(base);
         base.auditLogs = base.auditLogs || [];
         base.auditLogs.unshift({
           time: new Date().toLocaleString("zh-CN"),
           user: `${u.name} (${u.account})`,
           action: "通过 JSON 一键导入/更新病例数据（含详细量表细则）",
-          field: `患者编号: ${id} | 绑定负责人: ${base.ownerName} (${base.ownerAccount})`
+          field: `患者编号: ${id} | 自动绑定当前登录负责人: ${base.ownerName} (${base.ownerAccount})`
         });
         importedList.push(base);
       });
@@ -897,17 +997,19 @@ window.EDC_API = {
           const idx = colIdx(key);
           return idx >= 0 && row[idx] !== undefined ? row[idx] : "";
         };
-        const rawId = getCol("SUBJID") || getCol("患者编号") || row[0] || String(existingSubjects.length + r).padStart(3, "0");
-        const id = String(rawId).padStart(3, "0");
+        const autoId = String(maxExistingNum + r).padStart(3, "0");
+        const explicitId = getCol("SUBJID") || getCol("患者编号");
+        const id = explicitId ? String(explicitId).trim().padStart(3, "0") : autoId;
         const startDate = getCol("STARTDTC") || getCol("入组日期") || window.getTodayDateStr();
         const s = window.createEmptySubject(id, startDate, u);
 
         s.centerId = getCol("SITEID") || getCol("中心号") || "01";
         s.name = getCol("患者姓名") || getCol("NAME") || s.name;
         s.initials = (getCol("INITIALS") || getCol("姓名缩写") || "XXX").toUpperCase();
-        s.ownerAccount = getCol("OWNER_ACCT") || getCol("负责人账号") || u.account;
-        s.ownerName = getCol("OWNER_NAME") || getCol("负责人姓名") || u.name;
-        s.investigator = s.ownerName;
+        // 自动匹配当前登录账号与姓名
+        s.ownerAccount = u.account;
+        s.ownerName = u.name;
+        s.investigator = u.name;
         s.status = getCol("STATUS") || getCol("研究状态") || "进行中";
 
         if (getCol("SEX") || getCol("性别")) s.v1.demographics.gender = getCol("SEX") || getCol("性别");

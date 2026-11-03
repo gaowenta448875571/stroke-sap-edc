@@ -20,14 +20,14 @@ window.getTodayDateStr = function () {
   return `${y}-${m}-${d}`;
 };
 
-// 预设研究团队登录账号列表（支持后端接口动态同步与权限开通：PI解锁、数据导出、账号管理）
+// 预设研究团队登录账号列表（与后端 Supabase users 表保持一致，支持动态同步与权限开通）
 window.EDC_USERS = [
   {
-    account: "dr_lihua",
-    password: "123456",
-    name: "李华",
+    account: "dr_liguiwei",
+    password: "lgw@1556",
+    name: "李桂伟",
     role: "主任医师 (PI)",
-    dept: "神经重症科",
+    dept: "急症部",
     isPI: true,
     canExport: true,
     canUnlock: true,
@@ -35,11 +35,23 @@ window.EDC_USERS = [
     status: "active"
   },
   {
-    account: "dr_wangqiang",
-    password: "123456",
-    name: "王强",
-    role: "主治医师 (Sub-I)",
-    dept: "卒中中心",
+    account: "dr_gaowentao",
+    password: "448875571",
+    name: "高文涛",
+    role: "24专硕研究生",
+    dept: "急症部",
+    isPI: false,
+    canExport: true,
+    canUnlock: true,
+    canManageUsers: true,
+    status: "active"
+  },
+  {
+    account: "dr_liruiying",
+    password: "liruiying",
+    name: "李蕊影",
+    role: "25专硕研究生",
+    dept: "急症部",
     isPI: false,
     canExport: false,
     canUnlock: false,
@@ -47,11 +59,11 @@ window.EDC_USERS = [
     status: "active"
   },
   {
-    account: "dr_chenjing",
-    password: "123456",
-    name: "陈静",
-    role: "住院医师 / 针灸师",
-    dept: "针灸临床部",
+    account: "dr_yule",
+    password: "yule",
+    name: "余乐",
+    role: "26专硕研究生",
+    dept: "急症部",
     isPI: false,
     canExport: false,
     canUnlock: false,
@@ -59,11 +71,11 @@ window.EDC_USERS = [
     status: "active"
   },
   {
-    account: "crc_zhaolei",
-    password: "123456",
-    name: "赵磊",
-    role: "临床研究协调员 (CRC)",
-    dept: "科研随访组",
+    account: "dr_zhangkang",
+    password: "zhangkang",
+    name: "张康",
+    role: "26专硕研究生",
+    dept: "急症部",
     isPI: false,
     canExport: false,
     canUnlock: false,
@@ -617,7 +629,7 @@ window.createInitialSampleSubjects = function () {
   s1.v2_3.vitals = { temp: "38.7", resp: "28", pulse: "112", sbp: "138", dbp: "80" };
   s1.v2_3.sapConclusion = "确诊";
   s1.v2_3.confirmDate = window.addDaysToDateStr(start1, 4).slice(5);
-  s1.v2_3.judgeSigner = "李华主任医师";
+  s1.v2_3.judgeSigner = "李桂伟主任医师";
   s1.v2_3.isAcupuncturist = "否";
   s1.v2_3.imagingCriteria = ["新出现的斑片状浸润影", "叶或段实变影", "伴随征象：胸腔积液"];
   s1.v2_3.clinicalCriteria = ["呼吸道症状", "发热", "肺部体征", "外周血常规异常"];
@@ -709,12 +721,12 @@ window.createInitialSampleSubjects = function () {
     withdrawDate: "",
     withdrawReasonCode: "",
     withdrawOtherDetail: "",
-    piSignature: "李华",
+    piSignature: "李桂伟",
     piSignDate: window.addDaysToDateStr(start1, 91),
     piNote: "全部访视（V1-V5）及多组学生物样本（血浆、咽拭子、粪便）均按方案完整采集，数据核查无误。"
   };
 
-  // 病例 002：7天前入组 → 第3天(V2-1)已完成，今天正好是【第7天 (V2-2) 采集到期日】！（首次录入账号：dr_wangqiang 王强）
+  // 病例 002：7天前入组 → 第3天(V2-1)已完成，今天正好是【第7天 (V2-2) 采集到期日】！（首次录入账号：dr_gaowentao 高文涛）
   const start2 = window.addDaysToDateStr(today, -7);
   const s2 = window.createEmptySubject("002", start2, window.EDC_USERS[1]);
   s2.name = "林淑芬";
@@ -734,24 +746,24 @@ window.createInitialSampleSubjects = function () {
   s2.v2_1.completed = true;
   s2.v2_1.visitDate = window.addDaysToDateStr(start2, 3);
   s2.v2_1.vitals = { temp: "36.9", resp: "19", pulse: "78", sbp: "146", dbp: "84" };
-  s2.v2_1.scales.GCS = { score: 14, signer: "王强", isAcupuncturist: "否", details: { eye: 4, verbal: 4, motor: 6 } };
+  s2.v2_1.scales.GCS = { score: 14, signer: "高文涛", isAcupuncturist: "否", details: { eye: 4, verbal: 4, motor: 6 } };
   s2.v2_1.scales.NIHSS = {
     score: 12,
-    signer: "王强",
+    signer: "高文涛",
     isAcupuncturist: "否",
     details: { "1a": 0, "1b": 1, "1c": 0, "2": 1, "3": 1, "4": 1, "5a": 0, "5b": 2, "6a": 0, "6b": 2, "7": 0, "8": 1, "9": 2, "10": 1, "11": 0 }
   };
-  s2.v2_1.scales.FOIS = { score: 3, signer: "王强", isAcupuncturist: "否", details: { level: 3 } };
+  s2.v2_1.scales.FOIS = { score: 3, signer: "高文涛", isAcupuncturist: "否", details: { level: 3 } };
   s2.v2_1.scales.SOFA = {
     score: 2,
-    signer: "王强",
+    signer: "高文涛",
     isAcupuncturist: "否",
     details: { resp: 1, coag: 0, liver: 0, cardio: 0, cns: 1, renal: 0 },
     measured: { resp: "350", coag: "210", liver: "13.8", cardio: "86", cns: "14", renal: "72" }
   };
   s2.v2_1.scales.EQ5D = { score: "3-3-3-2-1 / VAS:58", vas: 58, details: { mobility: 3, selfcare: 3, activity: 3, pain: 2, anxiety: 1 } };
 
-  // 病例 003：3天前入组 → 今天正好是【第3天 (V2-1) 采集到期日】！（首次录入账号：dr_chenjing 陈静）
+  // 病例 003：3天前入组 → 今天正好是【第3天 (V2-1) 采集到期日】！（首次录入账号：dr_liruiying 李蕊影）
   const start3 = window.addDaysToDateStr(today, -3);
   const s3 = window.createEmptySubject("003", start3, window.EDC_USERS[2]);
   s3.name = "王明";
@@ -769,7 +781,7 @@ window.createInitialSampleSubjects = function () {
     bmi: "26.1"
   });
 
-  // 病例 004：31天前入组 → 第3天、第7天、出院已完成，【第30天 (V4) 随访已超期1天待采集】！（首次录入账号：crc_zhaolei 赵磊）
+  // 病例 004：31天前入组 → 第3天、第7天、出院已完成，【第30天 (V4) 随访已超期1天待采集】！（首次录入账号：dr_yule 余乐）
   const start4 = window.addDaysToDateStr(today, -31);
   const s4 = window.createEmptySubject("004", start4, window.EDC_USERS[3]);
   s4.name = "赵秀兰";

@@ -8,8 +8,10 @@ window.App = {
     currentVisitId: "V1",
     v1SubTab: 0, // V1 内部子模块页签索引 (0~8)
     isAuthenticated: false,
-    loginAccount: "dr_lihua",
-    loginPassword: "123456",
+    loginAccount: "",
+    loginPassword: "",
+    rememberPassword: false,
+    autoLogin: false,
     loginError: "",
     showLoginBackendCfg: false,
     currentUser: null,
@@ -23,7 +25,7 @@ window.App = {
       tempDetails: {},
       tempMeasured: {},
       tempVas: 70,
-      tempSigner: "王强",
+      tempSigner: "高文涛",
       tempIsAcu: "否"
     },
     auditModalOpen: false,
@@ -82,11 +84,19 @@ window.App = {
   async init() {
     await window.EDC_API.autoDetectBackendIfNeeded();
     this.state.usersList = await window.EDC_API.fetchUsers();
+
+    // 恢复记住的账号密码（若未勾选记住密码，登录框默认为空）
+    const creds = window.EDC_API.getRememberedCreds();
+    this.state.loginAccount = creds.account || "";
+    this.state.loginPassword = creds.password || "";
+    this.state.rememberPassword = Boolean(creds.rememberPassword);
+    this.state.autoLogin = Boolean(creds.autoLogin);
+
     const session = window.EDC_API.getSession();
     if (session && session.user) {
-      // 同步最新后端权限
-      const latestUser = this.state.usersList.find(u => u.account === session.user.account) || session.user;
-      if (latestUser.status === "disabled") {
+      // 严格核对后端最新用户表，若原账号已在 Supabase 中修改/删除或停用，则立即使旧会话失效
+      const latestUser = this.state.usersList.find(u => u.account === session.user.account);
+      if (!latestUser || latestUser.status === "disabled") {
         await window.EDC_API.logout();
         this.state.isAuthenticated = false;
         this.state.currentUser = null;
@@ -121,11 +131,15 @@ window.App = {
   async handleLoginSubmit(formEl) {
     const acc = formEl.querySelector("[name='login_account']")?.value.trim() || "";
     const pwd = formEl.querySelector("[name='login_password']")?.value.trim() || "";
+    const autoLogin = Boolean(formEl.querySelector("[name='login_auto']")?.checked);
+    const rememberPassword = Boolean(formEl.querySelector("[name='login_remember']")?.checked) || autoLogin;
     this.state.loginAccount = acc;
     this.state.loginPassword = pwd;
+    this.state.rememberPassword = rememberPassword;
+    this.state.autoLogin = autoLogin;
     this.state.loginError = "";
     try {
-      const session = await window.EDC_API.login(acc, pwd);
+      const session = await window.EDC_API.login(acc, pwd, { rememberPassword, autoLogin });
       this.state.isAuthenticated = true;
       this.state.currentUser = session.user;
       this.state.usersList = await window.EDC_API.fetchUsers();
@@ -145,20 +159,17 @@ window.App = {
     }
   },
 
-  // 登录页一键填入演示账号
-  quickFillLogin(account, password = "123456") {
-    this.state.loginAccount = account;
-    this.state.loginPassword = password;
-    this.state.loginError = "";
-    this.render();
-  },
-
   // 退出当前登录账号
   async handleLogout() {
     const prevName = this.state.currentUser ? `${this.state.currentUser.name} (${this.state.currentUser.account})` : "";
     await window.EDC_API.logout();
+    const creds = window.EDC_API.getRememberedCreds();
     this.state.isAuthenticated = false;
     this.state.currentUser = null;
+    this.state.loginAccount = creds.rememberPassword ? creds.account : "";
+    this.state.loginPassword = creds.rememberPassword ? creds.password : "";
+    this.state.rememberPassword = Boolean(creds.rememberPassword);
+    this.state.autoLogin = false;
     this.state.mobileToolbarOpen = false;
     this.state.userAdminModalOpen = false;
     this.state.loginError = "";
@@ -252,8 +263,8 @@ window.App = {
     const todayStr = window.getTodayDateStr();
     const tParts = todayStr.split("-").map(Number);
     const todayMs = new Date(tParts[0], tParts[1] - 1, tParts[2]).getTime();
-    const ownerAccount = subj?.ownerAccount || "dr_lihua";
-    const ownerName = subj?.ownerName || subj?.investigator || "李华";
+    const ownerAccount = subj?.ownerAccount || "dr_liguiwei";
+    const ownerName = subj?.ownerName || subj?.investigator || "李桂伟";
     const ownerRole = subj?.ownerRole || "研究医生";
 
     return this.MILESTONES.map(m => {
@@ -512,7 +523,7 @@ window.App = {
       tempDetails: { ...(scaleObj.details || {}) },
       tempMeasured: { ...(scaleObj.measured || {}) },
       tempVas: scaleObj.vas ?? 70,
-      tempSigner: scaleObj.signer || subj.ownerName || subj.investigator || "王强",
+      tempSigner: scaleObj.signer || subj.ownerName || subj.investigator || "高文涛",
       tempIsAcu: scaleObj.isAcupuncturist || "否"
     };
     this.render();
@@ -775,6 +786,7 @@ window.App = {
             <div>
               <label class="block text-xs font-bold text-slate-700 mb-1.5">研究者账号 / 工号</label>
               <input type="text" name="login_account" value="${this.state.loginAccount || ""}" required
+                autocomplete="username"
                 placeholder="请输入研究者账号"
                 class="crf-input py-2.5 text-sm font-medium" />
             </div>
@@ -782,8 +794,24 @@ window.App = {
             <div>
               <label class="block text-xs font-bold text-slate-700 mb-1.5">登录密码</label>
               <input type="password" name="login_password" value="${this.state.loginPassword || ""}" required
+                autocomplete="current-password"
                 placeholder="请输入登录密码"
                 class="crf-input py-2.5 text-sm font-medium" />
+            </div>
+
+            <div class="flex items-center justify-between text-xs text-slate-600 pt-0.5">
+              <label class="inline-flex items-center gap-1.5 cursor-pointer select-none">
+                <input type="checkbox" name="login_remember" ${this.state.rememberPassword ? "checked" : ""}
+                  onchange="App.state.rememberPassword=this.checked;if(!this.checked){App.state.autoLogin=false;var autoBox=this.form.querySelector('[name=login_auto]');if(autoBox)autoBox.checked=false;}"
+                  class="rounded border-slate-300 text-sky-600 focus:ring-sky-500" />
+                <span>记住账号密码</span>
+              </label>
+              <label class="inline-flex items-center gap-1.5 cursor-pointer select-none">
+                <input type="checkbox" name="login_auto" ${this.state.autoLogin ? "checked" : ""}
+                  onchange="App.state.autoLogin=this.checked;if(this.checked){App.state.rememberPassword=true;var remBox=this.form.querySelector('[name=login_remember]');if(remBox)remBox.checked=true;}"
+                  class="rounded border-slate-300 text-sky-600 focus:ring-sky-500" />
+                <span>下次自动登录</span>
+              </label>
             </div>
 
             <button type="submit"
@@ -801,7 +829,7 @@ window.App = {
     const proj = window.CRF_CONFIG.project;
     const allReminders = this.getAllReminders();
     const urgentCount = allReminders.filter(r => r.status === "overdue" || r.status === "today" || r.status === "soon").length;
-    const curUser = this.state.currentUser || { account: "dr_lihua", name: "李华", role: "主任医师 (PI)", isPI: true };
+    const curUser = this.state.currentUser || { account: "dr_liguiwei", name: "李桂伟", role: "主任医师 (PI)", isPI: true };
     const isPI = this.isCurrentUserPI();
     const canExport = this.canCurrentUserExport();
     const canManageUsers = this.canCurrentUserManageUsers();
@@ -953,7 +981,7 @@ window.App = {
     const allReminders = this.getAllReminders();
     const dueReminders = allReminders.filter(r => r.status === "overdue" || r.status === "today" || r.status === "soon");
     const pendingReminders = allReminders.filter(r => !r.done);
-    const curUser = this.state.currentUser || { account: "dr_lihua", name: "李华" };
+    const curUser = this.state.currentUser || { account: "dr_liguiwei", name: "李桂伟" };
     const filteredPending =
       this.state.reminderOwnerFilter === "all"
         ? pendingReminders
@@ -1146,8 +1174,8 @@ window.App = {
                     this.getSubjectMilestones(s).forEach(m => {
                       msMap[m.visitId] = m;
                     });
-                    const ownerAcct = s.ownerAccount || "dr_lihua";
-                    const ownerName = s.ownerName || s.investigator || "李华";
+                    const ownerAcct = s.ownerAccount || "dr_liguiwei";
+                    const ownerName = s.ownerName || s.investigator || "李桂伟";
 
                     const renderMilestoneCell = visitId => {
                       const m = msMap[visitId];
@@ -1249,8 +1277,8 @@ window.App = {
     subjMilestones.forEach(m => {
       msByVisitId[m.visitId] = m;
     });
-    const ownerAcct = subj.ownerAccount || "dr_lihua";
-    const ownerName = subj.ownerName || subj.investigator || "李华";
+    const ownerAcct = subj.ownerAccount || "dr_liguiwei";
+    const ownerName = subj.ownerName || subj.investigator || "李桂伟";
 
     return `
       <div class="grid grid-cols-1 lg:grid-cols-12 gap-4 lg:gap-5 items-start edc-split-layout">
@@ -1275,7 +1303,7 @@ window.App = {
                 .map(
                   s => `
                 <option value="${s.id}" ${s.id === subj.id ? "selected" : ""}>
-                  [${s.id}] ${s.initials} (${s.name || "匿名"}) · 负责人:${s.ownerName || "李华"}(${s.ownerAccount || "dr_lihua"})
+                  [${s.id}] ${s.initials} (${s.name || "匿名"}) · 负责人:${s.ownerName || "李桂伟"}(${s.ownerAccount || "dr_liguiwei"})
                 </option>
               `
                 )
@@ -1429,8 +1457,8 @@ window.App = {
   // 严格复刻纸质版 CRF 每页顶部的受试者表头 + 首次录入绑定账号 + 缺失值编码辅助栏
   renderCRFPageHeader(subj) {
     const curVisit = window.CRF_CONFIG.visits.find(v => v.id === this.state.currentVisitId) || window.CRF_CONFIG.visits[0];
-    const ownerAcct = subj.ownerAccount || "dr_lihua";
-    const ownerName = subj.ownerName || subj.investigator || "李华";
+    const ownerAcct = subj.ownerAccount || "dr_liguiwei";
+    const ownerName = subj.ownerName || subj.investigator || "李桂伟";
     return `
       <div class="bg-white rounded-xl border-2 border-slate-800 shadow-sm p-3.5 sm:p-4">
         <div class="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-200">
@@ -1523,7 +1551,7 @@ window.App = {
               class="border-b border-slate-400 px-2 py-0.5 font-semibold text-slate-900 focus:outline-none focus:border-sky-600 w-32" />
           </div>
           <span class="hidden sm:inline text-slate-300">|</span>
-          <span>首次录入绑定账号：<strong class="font-mono text-slate-800">${subj.ownerAccount || "dr_lihua"}</strong> (${subj.ownerName || "李华"})</span>
+          <span>首次录入绑定账号：<strong class="font-mono text-slate-800">${subj.ownerAccount || "dr_liguiwei"}</strong> (${subj.ownerName || "李桂伟"})</span>
         </div>
         <div class="flex items-center gap-2">
           <span>签署日期：</span>
@@ -1736,7 +1764,7 @@ window.App = {
 
   // ==================== AI 整理与 CSV / JSON 一键导入及标准模版下载弹窗 ====================
   renderImportModal() {
-    const curUser = this.state.currentUser || { account: "dr_wangqiang", name: "王强" };
+    const curUser = this.state.currentUser || { account: "dr_gaowentao", name: "高文涛" };
     const aiPrompt = window.EDC_API.getAIPromptText(curUser);
 
     return `
@@ -1745,7 +1773,7 @@ window.App = {
           <div class="px-5 py-4 bg-slate-900 text-white flex items-center justify-between">
             <div>
               <h3 class="text-base sm:text-lg font-bold">📥 数据导入与 AI 本地整理标准模版中心 (CSV / JSON)</h3>
-              <p class="text-xs text-slate-400 mt-0.5">支持数据录入员下载标准模版、使用 AI 在本地整理病历数据后一键批量导入系统（自动绑定当前登录账号：${curUser.name} ${curUser.account}）</p>
+              <p class="text-xs text-slate-400 mt-0.5">支持数据录入员下载标准模版、使用 AI 整理病历后一键批量导入系统（导入时自动顺位生成患者编号并绑定当前登录账号：${curUser.name} ${curUser.account}）</p>
             </div>
             <button onclick="App.state.importModalOpen=false;App.render()" class="text-slate-400 hover:text-white text-2xl">×</button>
           </div>
@@ -1801,13 +1829,13 @@ window.App = {
                 </button>
               </div>
               <textarea id="edc-import-paste-box" rows="6"
-                placeholder='在此直接粘贴 AI 生成的 JSON 代码块（如 { "id": "005", "name": "王五", ... }）或 CSV 文本...'
+                placeholder='在此直接粘贴 AI 生成的 JSON 代码块（如 { "name": "王五", "initials": "WWU", ... }）或 CSV 文本...'
                 class="crf-input font-mono text-xs"></textarea>
             </div>
           </div>
 
           <div class="px-5 py-3 bg-slate-100 border-t border-slate-200 text-xs text-slate-500">
-            提示：若导入的患者编号已存在则自动更新该患者数据；若为新编号则自动新增并绑定您的账号 (${curUser.account})。
+            提示：导入时患者编号将按当前已入组患者顺位自动生成三位数字（如 001、005...），并自动匹配当前系统登录账号 (${curUser.name} / ${curUser.account}) 作为首次录入负责人。
           </div>
         </div>
       </div>
@@ -1973,7 +2001,7 @@ window.App = {
   },
 
   async handleDeleteUserAccount(account) {
-    if (account === "dr_lihua" || (this.state.currentUser && account === this.state.currentUser.account)) {
+    if (account === "dr_liguiwei" || (this.state.currentUser && account === this.state.currentUser.account)) {
       this.showToast("不可删除主 PI 账号或当前正在登录的账号！");
       return;
     }
@@ -2117,7 +2145,7 @@ window.App = {
                         </td>
                         <td class="py-2.5 px-3 text-right">
                           ${
-                            u.account !== "dr_lihua"
+                            u.account !== "dr_liguiwei"
                               ? `<button type="button" onclick="App.handleDeleteUserAccount('${u.account}')" class="text-rose-600 hover:underline font-semibold">删除</button>`
                               : `<span class="text-slate-400">主PI</span>`
                           }

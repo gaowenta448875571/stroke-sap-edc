@@ -183,14 +183,22 @@ def init_db():
         )
         """
     )
+    if IS_POSTGRES:
+        try:
+            db_execute("ALTER TABLE users ENABLE ROW LEVEL SECURITY")
+            db_execute("ALTER TABLE subjects ENABLE ROW LEVEL SECURITY")
+        except Exception:
+            pass
+
     row = db_fetchone("SELECT COUNT(*) AS cnt FROM users")
     cnt = int(row["cnt"]) if row else 0
     if cnt == 0:
         default_users = [
-            ("dr_lihua", "123456", "李华", "主任医师 (PI)", "神经重症科", 1, 1, 1, 1, "active"),
-            ("dr_wangqiang", "123456", "王强", "主治医师 (Sub-I)", "卒中中心", 0, 0, 0, 0, "active"),
-            ("dr_chenjing", "123456", "陈静", "住院医师 / 针灸师", "针灸临床部", 0, 0, 0, 0, "active"),
-            ("crc_zhaolei", "123456", "赵磊", "临床研究协调员 (CRC)", "科研随访组", 0, 0, 0, 0, "active"),
+            ("dr_liguiwei", "lgw@1556", "李桂伟", "主任医师 (PI)", "急症部", 1, 1, 1, 1, "active"),
+            ("dr_gaowentao", "448875571", "高文涛", "24专硕研究生", "急症部", 0, 1, 1, 1, "active"),
+            ("dr_liruiying", "liruiying", "李蕊影", "25专硕研究生", "急症部", 0, 0, 0, 0, "active"),
+            ("dr_yule", "yule", "余乐", "26专硕研究生", "急症部", 0, 0, 0, 0, "active"),
+            ("dr_zhangkang", "zhangkang", "张康", "26专硕研究生", "急症部", 0, 0, 0, 0, "active"),
         ]
         now_str = time.strftime("%Y-%m-%d %H:%M:%S")
         for acc, pwd, name, role, dept, is_pi, exp, unl, mgr, st in default_users:
@@ -199,11 +207,14 @@ def init_db():
                 INSERT INTO users (account, password_hash, name, role, dept, is_pi, can_export, can_unlock, can_manage_users, status, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (acc, hash_password(pwd), name, role, dept, is_pi, exp, unl, mgr, st, now_str),
+                (acc, pwd, name, role, dept, is_pi, exp, unl, mgr, st, now_str),
             )
 
 
-init_db()
+try:
+    init_db()
+except Exception as _init_err:
+    print(f"[WARN] init_db deferred: {_init_err}")
 
 
 def row_to_user_dict(row: Dict[str, Any]) -> Dict[str, Any]:
@@ -285,7 +296,9 @@ def login(req: LoginRequest):
         raise HTTPException(status_code=401, detail=f"账号 '{req.account}' 未开通，请联系管理员在后端开通")
     if row["status"] == "disabled":
         raise HTTPException(status_code=403, detail=f"账号 '{req.account}' 已被后端停用")
-    if row["password_hash"] != hash_password(req.password.strip()):
+    stored_pwd = (row["password_hash"] or "").strip()
+    input_pwd = req.password.strip()
+    if stored_pwd != input_pwd and stored_pwd != hash_password(input_pwd):
         raise HTTPException(status_code=401, detail="登录密码错误")
     user_dict = row_to_user_dict(row)
     token = create_token(
@@ -329,23 +342,23 @@ def admin_upsert_user(
     can_mgr = 1 if (req.canManageUsers or req.isPI) else 0
 
     if existing:
-        pwd_hash = hash_password(req.password.strip()) if req.password else existing["password_hash"]
+        pwd_val = req.password.strip() if req.password else existing["password_hash"]
         db_execute(
             """
             UPDATE users
             SET password_hash=?, name=?, role=?, dept=?, is_pi=?, can_export=?, can_unlock=?, can_manage_users=?, status=?, updated_at=?
             WHERE account=?
             """,
-            (pwd_hash, req.name, req.role, req.dept, is_pi, can_exp, can_unl, can_mgr, req.status, now_str, acc),
+            (pwd_val, req.name, req.role, req.dept, is_pi, can_exp, can_unl, can_mgr, req.status, now_str, acc),
         )
     else:
-        pwd_hash = hash_password((req.password or "123456").strip())
+        pwd_val = (req.password or "123456").strip()
         db_execute(
             """
             INSERT INTO users (account, password_hash, name, role, dept, is_pi, can_export, can_unlock, can_manage_users, status, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (acc, pwd_hash, req.name, req.role, req.dept, is_pi, can_exp, can_unl, can_mgr, req.status, now_str),
+            (acc, pwd_val, req.name, req.role, req.dept, is_pi, can_exp, can_unl, can_mgr, req.status, now_str),
         )
     return {"status": "ok", "users": list_all_users_from_db()}
 
@@ -357,7 +370,7 @@ def admin_delete_user(
 ):
     if not (cur_user.get("canManageUsers") or cur_user.get("isPI")):
         raise HTTPException(status_code=403, detail="仅限管理员或 PI 权限可删除账号")
-    if account == "dr_lihua" or account == cur_user["account"]:
+    if account == "dr_liguiwei" or account == cur_user["account"]:
         raise HTTPException(status_code=400, detail="不可删除主 PI 账号或当前登录账号")
     db_execute("DELETE FROM users WHERE account = ?", (account,))
     return {"status": "ok", "users": list_all_users_from_db()}

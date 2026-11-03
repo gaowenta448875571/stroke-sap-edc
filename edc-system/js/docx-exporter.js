@@ -145,7 +145,7 @@ window.DOCX_EXPORTER = (function () {
     const centerId = subj.centerId || "01";
     const subjId = subj.id || "□□□";
     const initials = subj.initials || "□□□";
-    const invName = subj.investigator || subj.ownerName || cs.piSignature || "李华";
+    const invName = subj.investigator || subj.ownerName || cs.piSignature || "李桂伟";
     const startDate = v1.visitDate || subj.startDate || "";
     const endDate = subj.endDate || cs.interventionEndDate || v5.visitDate || v3.visitDate || "";
 

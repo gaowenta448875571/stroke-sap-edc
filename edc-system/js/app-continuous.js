@@ -847,7 +847,7 @@ Object.assign(window.App, {
       return !isNaN(n) && n > max ? n : max;
     }, 0);
     const nextId = String(maxNumId + 1).padStart(3, "0");
-    const curUser = this.state.currentUser || { account: "dr_wangqiang", name: "王强", role: "主治医师" };
+    const curUser = this.state.currentUser || { account: "dr_gaowentao", name: "高文涛", role: "主治医师" };
     return `
       <div class="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
         <form onsubmit="event.preventDefault();App.createNewSubject(this)"
