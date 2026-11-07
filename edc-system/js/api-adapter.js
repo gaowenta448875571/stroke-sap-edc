@@ -1,11 +1,11 @@
 // 前后端分离数据接口适配器 (Storage, JWT Auth, Backend Permission & REST API Adapter)
 
 const STORAGE_KEY = "STROKE_SAP_EDC_SUBJECTS_V6";
+const BACKUP_STORAGE_KEY = "STROKE_SAP_EDC_SUBJECTS_BACKUP_V6";
 const API_CONFIG_KEY = "STROKE_SAP_EDC_API_CONFIG_V3";
 const SESSION_KEY = "STROKE_SAP_EDC_AUTH_SESSION_V3";
 const USERS_STORAGE_KEY = "STROKE_SAP_EDC_USERS_V3";
 const REMEMBER_CREDS_KEY = "STROKE_SAP_EDC_REMEMBER_CREDS_V1";
-const PURGE_FLAG_KEY = "STROKE_SAP_EDC_PURGE_20261103";
 
 window.EDC_API = {
   getConfig() {
@@ -377,39 +377,27 @@ window.EDC_API = {
     return demoNames.has(name) || demoHospIds.has(hospId);
   },
 
-  // 加载所有受试者数据（已清除全部测试与示范数据，空库时直接返回 []）
+  // 加载所有受试者数据（双向智能合并云端与本地缓存，防止因冷启动、网络波动或其他设备首次访问导致本地已填数据丢失）
   async listSubjects() {
     const cfg = this.getConfig();
 
-    // 首次升级后自动清理本地旧版缓存与云端遗留测试数据
+    // 1. 先读取本地浏览器缓存（主缓存为空时自动尝试从本地滚动备份恢复）
+    let cleanLocal = [];
     try {
-      if (localStorage.getItem(PURGE_FLAG_KEY) !== "done") {
-        ["STROKE_SAP_EDC_SUBJECTS_V1", "STROKE_SAP_EDC_SUBJECTS_V2", "STROKE_SAP_EDC_SUBJECTS_V3", "STROKE_SAP_EDC_SUBJECTS_V4", "STROKE_SAP_EDC_SUBJECTS_V5", STORAGE_KEY].forEach(k => {
-          localStorage.removeItem(k);
-        });
-        if (cfg.mode === "remote") {
-          try {
-            await fetch(`${cfg.baseUrl}/subjects`, {
-              method: "DELETE",
-              headers: cfg.token ? { Authorization: `Bearer ${cfg.token}` } : {}
-            });
-          } catch (e) {}
-          try {
-            await fetch(`${cfg.baseUrl}/subjects/sync`, {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                ...(cfg.token ? { Authorization: `Bearer ${cfg.token}` } : {})
-              },
-              body: JSON.stringify({ subjects: [], replaceAll: true })
-            });
-          } catch (e) {}
+      const raw = localStorage.getItem(STORAGE_KEY);
+      const parsed = raw ? JSON.parse(raw) : [];
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        cleanLocal = parsed.filter(s => !this.isLegacyDemoSubject(s));
+      } else {
+        const backupRaw = localStorage.getItem(BACKUP_STORAGE_KEY);
+        const backupParsed = backupRaw ? JSON.parse(backupRaw) : [];
+        if (Array.isArray(backupParsed) && backupParsed.length > 0) {
+          cleanLocal = backupParsed.filter(s => !this.isLegacyDemoSubject(s));
         }
-        localStorage.setItem(PURGE_FLAG_KEY, "done");
-        localStorage.setItem(STORAGE_KEY, JSON.stringify([]));
-        return [];
       }
-    } catch (e) {}
+    } catch (e) {
+      console.error("读取本地受试者缓存失败:", e);
+    }
 
     if (cfg.mode === "remote") {
       try {
@@ -419,17 +407,48 @@ window.EDC_API = {
         if (res.ok) {
           const remoteList = await res.json();
           if (Array.isArray(remoteList)) {
-            const cleanList = remoteList.filter(s => !this.isLegacyDemoSubject(s));
-            if (cleanList.length !== remoteList.length) {
-              // 若云端仍有遗留的旧演示患者，立即同步清除
-              await this.saveSubjects(cleanList, true);
-            }
-            cleanList.forEach(s => {
+            const cleanRemote = remoteList.filter(s => !this.isLegacyDemoSubject(s));
+            const mergedMap = new Map();
+            let needsSyncToRemote = false;
+
+            cleanRemote.forEach(s => {
+              if (s && s.id) mergedMap.set(String(s.id), s);
+            });
+
+            // 将本地新增或本地编辑记录数更多（如 Render 唤醒期间离线保存）的病例合并回队列并自动回推云端
+            cleanLocal.forEach(localSubj => {
+              if (!localSubj || !localSubj.id) return;
+              const sid = String(localSubj.id);
+              const remoteSubj = mergedMap.get(sid);
+              if (!remoteSubj) {
+                mergedMap.set(sid, localSubj);
+                needsSyncToRemote = true;
+              } else {
+                const localLogs = Array.isArray(localSubj.auditLogs) ? localSubj.auditLogs.length : 0;
+                const remoteLogs = Array.isArray(remoteSubj.auditLogs) ? remoteSubj.auditLogs.length : 0;
+                if (localLogs > remoteLogs) {
+                  mergedMap.set(sid, localSubj);
+                  needsSyncToRemote = true;
+                }
+              }
+            });
+
+            const mergedList = Array.from(mergedMap.values()).sort((a, b) =>
+              String(a.id || "").localeCompare(String(b.id || ""))
+            );
+            mergedList.forEach(s => {
               this.reconcileSubjectScales(s);
               this.reconcileSubjectHistoryAndLabs(s);
             });
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(cleanList));
-            return cleanList;
+
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(mergedList));
+            if (mergedList.length > 0) {
+              localStorage.setItem(BACKUP_STORAGE_KEY, JSON.stringify(mergedList));
+            }
+            if (needsSyncToRemote && mergedList.length > 0) {
+              await this.saveSubjects(mergedList, false);
+            }
+            return mergedList;
           }
         }
       } catch (e) {
@@ -437,31 +456,24 @@ window.EDC_API = {
       }
     }
 
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) {
-          const cleanLocal = parsed.filter(s => !this.isLegacyDemoSubject(s));
-          cleanLocal.forEach(s => {
-            this.reconcileSubjectScales(s);
-            this.reconcileSubjectHistoryAndLabs(s);
-          });
-          return cleanLocal;
-        }
-      }
-    } catch (e) {
-      console.error("读取本地受试者数据失败:", e);
+    cleanLocal.forEach(s => {
+      this.reconcileSubjectScales(s);
+      this.reconcileSubjectHistoryAndLabs(s);
+    });
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(cleanLocal));
+    if (cleanLocal.length > 0) {
+      localStorage.setItem(BACKUP_STORAGE_KEY, JSON.stringify(cleanLocal));
     }
-
-    localStorage.setItem(STORAGE_KEY, JSON.stringify([]));
-    return [];
+    return cleanLocal;
   },
 
-  // 保存受试者数据
-  async saveSubjects(subjects, replaceAll = true) {
+  // 保存受试者数据（默认采用增量/覆盖更新 replaceAll=false，防止意外清空云端其他记录）
+  async saveSubjects(subjects, replaceAll = false) {
     const list = Array.isArray(subjects) ? subjects : [];
     localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
+    if (list.length > 0) {
+      localStorage.setItem(BACKUP_STORAGE_KEY, JSON.stringify(list));
+    }
     const cfg = this.getConfig();
     if (cfg.mode === "remote") {
       try {
@@ -484,6 +496,7 @@ window.EDC_API = {
   async deleteSubjectById(subjectId, existingSubjects) {
     const nextList = (existingSubjects || []).filter(s => s.id !== subjectId);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(nextList));
+    localStorage.setItem(BACKUP_STORAGE_KEY, JSON.stringify(nextList));
     const cfg = this.getConfig();
     if (cfg.mode === "remote") {
       try {
@@ -492,7 +505,6 @@ window.EDC_API = {
           headers: cfg.token ? { Authorization: `Bearer ${cfg.token}` } : {}
         });
       } catch (e) {}
-      await this.saveSubjects(nextList, true);
     }
     return nextList;
   },
@@ -500,6 +512,7 @@ window.EDC_API = {
   // 清空全部受试者数据并同步云端
   async clearAllSubjects() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify([]));
+    localStorage.setItem(BACKUP_STORAGE_KEY, JSON.stringify([]));
     const cfg = this.getConfig();
     if (cfg.mode === "remote") {
       try {
@@ -508,7 +521,6 @@ window.EDC_API = {
           headers: cfg.token ? { Authorization: `Bearer ${cfg.token}` } : {}
         });
       } catch (e) {}
-      await this.saveSubjects([], true);
     }
     return [];
   },

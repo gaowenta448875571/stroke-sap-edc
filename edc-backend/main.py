@@ -199,18 +199,6 @@ def init_db():
         except Exception:
             pass
 
-    # 一次性清除系统中所有旧病人数据及测试/示范数据（仅执行一次，不影响后续新录入的真实患者）
-    try:
-        purged = db_fetchone("SELECT meta_val FROM system_meta WHERE meta_key = ?", ("purge_all_subjects_20261103",))
-        if not purged:
-            db_execute("DELETE FROM subjects")
-            db_execute(
-                "INSERT INTO system_meta (meta_key, meta_val) VALUES (?, ?)",
-                ("purge_all_subjects_20261103", time.strftime("%Y-%m-%d %H:%M:%S")),
-            )
-    except Exception:
-        pass
-
     row = db_fetchone("SELECT COUNT(*) AS cnt FROM users")
     cnt = int(row["cnt"]) if row else 0
     if cnt == 0:
@@ -421,14 +409,12 @@ def sync_subjects(req: SubjectsSyncRequest):
             """,
             (sid, json.dumps(subj, ensure_ascii=False), now_str),
         )
-    if req.replaceAll:
-        if len(incoming_ids) == 0:
-            db_execute("DELETE FROM subjects")
-        else:
-            existing_rows = db_fetchall("SELECT id FROM subjects")
-            for er in existing_rows:
-                if er["id"] not in incoming_ids:
-                    db_execute("DELETE FROM subjects WHERE id = ?", (er["id"],))
+    # 防止任何旧版本前端或空列表同步请求误删全表数据；仅当非空列表显式要求 replaceAll 时才清理已移除项
+    if req.replaceAll and len(incoming_ids) > 0:
+        existing_rows = db_fetchall("SELECT id FROM subjects")
+        for er in existing_rows:
+            if er["id"] not in incoming_ids:
+                db_execute("DELETE FROM subjects WHERE id = ?", (er["id"],))
     return {"status": "ok", "count": len(req.subjects)}
 
 
